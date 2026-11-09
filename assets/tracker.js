@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1525";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1535";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -154,7 +154,7 @@ function renderOverview() {
         h("td", null, h("button", { class: "linkish", type: "button", text: studentName(t.studentId), onclick: () => select(t.studentId, t.id) })),
         h("td", { text: t.title }), h("td", null, statusChip(statusOf(t))), h("td", null, progBar(t.progress)),
         h("td", { class: "num", text: fmtD(startOf(t)) }), h("td", { class: "num", text: m.elapsed }), h("td", null, timingChip(t))); }))))
-      : h("p", { class: "note", text: "No open tasks." }));
+      : h("p", { class: "note", text: "No current tasks." }));
   const done = tasksOf().filter(t => isDone(t)).sort((a, b) => (b.doneAt || "").localeCompare(a.doneAt || "")).slice(0, 12);
   const donePanel = h("section", { class: "panel sec-tasks" },
     h("div", { class: "panel-head" }, h("h3", { text: "Recently completed" }), h("span", { class: "muted", text: avgDays(tasksOf()) == null ? "" : "Average " + plural(avgDays(tasksOf()), "day") + " to finish" })),
@@ -367,11 +367,12 @@ function buildStudent(s) {
       h("label", { class: "fieldlabel" }, "Due by", h("input", { id: "nt-due", type: "date" })),
       h("label", { class: "fieldlabel" }, "Responsible", h("select", { id: "nt-owner" }, h("option", { value: "student", text: "Student" }), h("option", { value: "supervisor", text: "Supervisor" })))),
     h("div", null, h("button", { class: "btn", type: "submit", text: "Add task" })));
-  const filters = h("div", { class: "filters", id: "task-filters" }, [["all", "All"], ["open", "Open"], ["done", "Completed"]].map(([k, l]) =>
+  const filters = h("div", { class: "filters", id: "task-filters" }, [["open", "Current"], ["done", "Completed"], ["all", "All"]].map(([k, l]) =>
     h("button", { type: "button", "data-f": k, "aria-pressed": S.filter === k ? "true" : "false", text: l, onclick: () => { S.filter = k; refreshStudent(s); } })));
   const tasks = h("section", { class: "panel" },
+    taskForm,
     h("div", { class: "panel-head" }, h("h3", { text: "Task register" }), filters),
-    h("div", { class: "tasks", id: "task-list" }), taskForm);
+    h("div", { class: "tasks", id: "task-list" }));
 
   /* meeting form: task-wise */
   const meetForm = h("form", { hidden: !S.canWrite, onsubmit: e => { e.preventDefault(); submitMeeting(s, e.target); } },
@@ -545,7 +546,7 @@ function editForm(t) {
     h("div", { class: "row" },
       h("label", { class: "fieldlabel" }, "Due date", h("input", { type: "date", id: "eu-" + id, value: t.due || "" })),
       h("label", { class: "fieldlabel" }, "Details", h("input", { id: "et-" + id, value: t.details || "", maxlength: "2000" }))),
-    h("div", { class: "row", style: "align-items:center" }, h("div", null, h("button", { class: "btn", type: "submit", text: "Save update" })), h("div", { style: "text-align:right" }, del)));
+    h("div", { class: "row", style: "align-items:center" }, h("div", null, h("button", { class: "btn", type: "submit", text: "Save update" })), h("div", { style: "text-align:right" }, S.isOwner ? del : null)));
 }
 
 /* task-wise rows in the meeting form; rebuilt only when the set of open tasks changes, keeping typed values */
@@ -857,9 +858,9 @@ function refreshStudent(s) {
   open.sort(sortTasks); done.sort((a, b) => (b.doneAt || "").localeCompare(a.doneAt || ""));
   const groupHead = (label, n) => h("div", { class: "task-group" }, h("span", { text: label }), h("span", { class: "mono", text: String(n) }));
   let items;
-  if (S.filter === "open") items = open.length ? open.map(taskCard) : [h("p", { class: "note", text: "No open tasks. Add one below or assign tasks in a meeting." })];
+  if (S.filter === "open") items = open.length ? open.map(taskCard) : [h("p", { class: "note", text: "No current tasks. Add one above or assign tasks in a meeting." })];
   else if (S.filter === "done") items = done.length ? done.map(taskCard) : [h("p", { class: "note", text: "No completed tasks yet." })];
-  else items = [groupHead("Open", open.length), ...(open.length ? open.map(taskCard) : [h("p", { class: "note", text: "No open tasks." })]),
+  else items = [groupHead("Current", open.length), ...(open.length ? open.map(taskCard) : [h("p", { class: "note", text: "No current tasks." })]),
     groupHead("Completed", done.length), ...(done.length ? done.map(taskCard) : [h("p", { class: "note", text: "No completed tasks yet." })])];
   const tl = document.getElementById("task-list");
   const editing = tl.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);

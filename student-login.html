@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="assets/app.css?v=20261109-1525">
+<link rel="stylesheet" href="assets/app.css?v=20261109-1535">
 </head>
 <body>
 <div class="auth-wrap">
@@ -30,7 +30,7 @@
   </div>
 </div>
 <script type="module">
-  import { configured, currentUser, isSupervisor, signIn, signOut, authMessage, setupNotice } from "./assets/core.js?v=20261109-1525";
+  import { configured, currentUser, isSupervisor, signIn, signOut, authMessage, setupNotice } from "./assets/core.js?v=20261109-1535";
   const $ = id => document.getElementById(id);
   if (!configured) setupNotice($("card"));
   else { const u = await currentUser(); if (u) location.replace(isSupervisor(u) ? "dashboard.html" : "student.html"); }

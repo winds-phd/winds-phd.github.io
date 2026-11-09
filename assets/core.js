@@ -1,6 +1,6 @@
 // Talks to the Google Apps Script backend (data lives in a Google Sheet in the supervisor's Drive).
 // Provides sign-in helpers and a small live data layer used by every page.
-import { API_URL } from "./config.js?v=20261109-1525";
+import { API_URL } from "./config.js?v=20261109-1535";
 
 export const configured = !String(API_URL).startsWith("PASTE_") && /^https:\/\//.test(API_URL);
 const TOKEN_KEY = "phdlog.token";

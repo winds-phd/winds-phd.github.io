@@ -225,6 +225,7 @@ function dispatch_(action, req) {
       const u = requireUser_(req), segs = docPath_(req.path), path = segs.join("/");
       if (!canSee_(u, segs)) fail_("permission-denied", "You don't have access to this record.");
       if (u.role === "student" && segs[0] === "students" && segs.length === 2) fail_("permission-denied", "Only the supervisor can remove a student.");
+      if (u.role === "student" && segs[0] === "students" && segs[2] === "tasks") fail_("permission-denied", "Only the supervisor can delete tasks.");
       if (segs[0] === "conferences" && u.role !== "supervisor" && (getDoc_(path) || {}).createdBy !== u.login) fail_("permission-denied", "You can only remove conference entries you added.");
       deleteDoc_(path);
       if (u.role === "supervisor" && segs.length === 2 && segs[0] === "students") {
