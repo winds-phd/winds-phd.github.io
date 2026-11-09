@@ -9,7 +9,7 @@ index.html              start page: "I'm a student" / "I'm the supervisor"
 student-login.html      student sign-in (admission number + password)
 forgot.html             "Forgot?" — emails a reset link
 reset.html              opened from the email: choose a new password / password
-register.html           student sign-up: admission number, password, name, email
+register.html           student sign-up with the lab code (starts as 67890)
 supervisor-login.html   supervisor sign-in (email + password)
 supervisor-signup.html  supervisor sign-up, once, with the setup key
 dashboard.html      supervisor's working page
@@ -48,10 +48,10 @@ google-apps-script/Code.gs   the backend that stores data in your Drive
 
 1. Open **https://winds-phd.github.io/supervisor-signup.html** (or the start page → "I'm the supervisor").
 2. Enter the **SETUP KEY** from Part A, your name, email and a password (8+ characters).
-3. You're on the dashboard. The left column shows the student sign-up link with a **Copy link** button.
+3. You're on the dashboard. The left column shows the **lab code** (67890; you can change it) and the student sign-up link with a **Copy link** button.
 
 ## Students
-Send them `https://winds-phd.github.io/register.html`. They register once, then sign in at **https://winds-phd.github.io/student-login.html** with **admission number + password**. Each student sees only their own record; the Apps Script checks this on every request.
+Send them `https://winds-phd.github.io/register.html` and the lab code. They register once, then sign in at **https://winds-phd.github.io/student-login.html** with **admission number + password**. Each student sees only their own record; the Apps Script checks this on every request.
 
 ## Sections on each student's page
 Tasks (blue) · Publications (green) · Paper details: titles and links to read or cite (violet) · Conferences: shared by the whole group, anyone can add (rose) · Meetings (peach). Supervisor feedback is highlighted in yellow wherever it appears.

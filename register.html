@@ -15,12 +15,15 @@
     <div class="auth-brand">
       <div class="label">Student sign-up</div>
       <h1>Join your supervisor's group</h1>
-      <p>Create your account. You'll sign in with your admission number and the password you choose here.</p>
+      <p>You'll need the lab code from your supervisor. You'll sign in with your admission number and the password you choose here.</p>
     </div>
 
     <section class="panel" id="card">
       <form id="regForm" novalidate>
-        <label class="fieldlabel">Admission number<input id="adm" required maxlength="40" autocomplete="username" placeholder="e.g. 22DR0123"></label>
+        <div class="row">
+          <label class="fieldlabel">Lab code (from your supervisor)<input id="code" required maxlength="12" autocomplete="off"></label>
+          <label class="fieldlabel">Admission number<input id="adm" required maxlength="40" autocomplete="username" placeholder="e.g. 22DR0123"></label>
+        </div>
         <div class="row">
           <label class="fieldlabel">Password<input id="secret" type="password" required minlength="6" autocomplete="new-password"></label>
           <label class="fieldlabel">Repeat password<input id="secret2" type="password" required minlength="6" autocomplete="new-password"></label>
@@ -53,13 +56,13 @@
   $("regForm")?.addEventListener("submit", async e => {
     e.preventDefault(); $("err").textContent = "";
     const v = id => $(id).value.trim();
-    if (!v("adm") || !v("name")) { $("err").textContent = "Fill in your admission number and your name."; return; }
+    if (!v("code") || !v("adm") || !v("name")) { $("err").textContent = "Fill in the lab code, your admission number and your name."; return; }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v("email"))) { $("err").textContent = "Enter a valid email. It's used if you ever forget your password."; return; }
     if ($("secret").value.length < 6) { $("err").textContent = "Your password must be at least 6 characters."; return; }
     if ($("secret").value !== $("secret2").value) { $("err").textContent = "The two passwords don't match."; return; }
     $("btn").disabled = true;
     try {
-      await registerStudent({ adm: v("adm"), secret: $("secret").value, name: v("name"), email: v("email"), topic: v("topic"), year: v("year"), stage: $("stage").value });
+      await registerStudent({ code: v("code"), adm: v("adm"), secret: $("secret").value, name: v("name"), email: v("email"), topic: v("topic"), year: v("year"), stage: $("stage").value });
       location.href = "student.html";
     } catch (err) { $("err").textContent = authMessage(err); }
     finally { $("btn").disabled = false; }

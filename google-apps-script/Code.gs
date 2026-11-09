@@ -124,6 +124,8 @@ function dispatch_(action, req) {
       const adm = String(req.adm || "").trim(), key = admKey_(adm), name = String(req.name || "").trim().slice(0, 80);
       const login = "student:" + key;
       if (tooMany_("reg:" + key)) fail_("too-many-requests", "Too many attempts. Wait 10 minutes and try again.");
+      const lab = getDoc_("private/join") || {};
+      if (!lab.code || String(req.code || "").trim() !== String(lab.code)) { noteFailure_("reg:" + key); fail_("wrong-code", "That lab code isn't right. Ask your supervisor for the WiNDS Lab code."); }
       if (key.length < 3 || !SEGMENT.test(key)) fail_("invalid-argument", "Check your admission number.");
       if (String(req.secret || "").length < 6) fail_("invalid-argument", "Your password must be at least 6 characters.");
       if (!name) fail_("invalid-argument", "Enter your name.");

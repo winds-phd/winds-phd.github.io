@@ -142,7 +142,7 @@ function renderOverview() {
     d.replaceChildren(h("div", { class: "empty" },
       h("h3", { text: "No students have registered yet" }),
       h("p", { text: "Each student gets a task register and a meeting log. Every task records its status, progress, assigned date, due date and how many days it took. At each meeting you update every open task in one place, and that update is kept in both the meeting record and the task's own history." }),
-      h("p", null, "Send students the sign-up link shown on the left. Each student creates their own account with their admission number and a password, and appears here straight away.")));
+      h("p", null, "Send students the sign-up link and the lab code shown on the left. Each student creates their own account with their admission number and a password, and appears here straight away.")));
     return;
   }
   const open = tasksOf().filter(t => !isDone(t)).sort(sortTasks);
@@ -963,6 +963,16 @@ export async function start(pageRole) {
     if (S.isOwner) renderRoster();
   }, () => {});
   if (sup) {
+    db.doc("private/join").onSnapshot(snap => { document.getElementById("joinShow").textContent = snap.exists && snap.data().code ? snap.data().code : "Not set"; },
+      () => { document.getElementById("joinShow").textContent = "Can't read"; });
+    document.getElementById("joinEditBtn").onclick = () => { document.getElementById("joinForm").hidden = false; document.getElementById("joinNew").focus(); };
+    document.getElementById("joinCancel").onclick = () => { document.getElementById("joinForm").hidden = true; };
+    document.getElementById("joinForm").onsubmit = async e => {
+      e.preventDefault(); const code = val("joinNew").trim();
+      if (!/^[A-Za-z0-9]{4,12}$/.test(code)) { say("Use 4 to 12 letters or digits."); return; }
+      const ok = await write(d => d.doc("private/join").set({ code, updatedAt: Date.now() }), "Lab code changed to " + code + ". Existing students aren't affected.");
+      if (ok) { e.target.reset(); e.target.hidden = true; }
+    };
     const url = new URL("register.html", location.href).href;
     document.getElementById("signupUrl").textContent = url;
     document.getElementById("copySignup").onclick = async () => {
