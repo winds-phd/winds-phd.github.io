@@ -11,12 +11,17 @@
  *   4. Put that URL in assets/config.js on the website.
  *
  * Forgot a password? Use "Forgot?" on the sign-in page: a reset link is emailed (data is kept).
+ * Email notifications (feedback, meeting reminders, due dates): run  setupNotifications  once.
  * Last resort for the supervisor: run  newSetupKey  and do the supervisor sign-up again on the site.
  */
 
 const DEFAULT_CLASS_CODE = "67890";
 const SITE_URL = "https://winds-phd.github.io/";   // reset links in emails point here
 const RESET_MINUTES = 60;                           // how long an emailed reset link works
+const TZ = "Asia/Kolkata";                          // all dates and times on the site are Indian time
+const MEETING_NOTICE_MIN = 17;                      // with a 5-minute check, the email lands about 15 minutes before
+const DUE_REMINDER_HOUR = 9;                        // task due-date reminders go out from 9 AM the day before
+const AUTO_REMARKS = ["Task assigned", "Assigned in meeting", "Paper added", "Marked as done", "Marked as not done by supervisor"];
 const SESSION_DAYS = 14;
 const HASH_ROUNDS = 1000;
 const MAX_DOC_CHARS = 45000;           // a Google Sheets cell holds up to 50,000 characters
@@ -218,6 +223,7 @@ function dispatch_(action, req) {
       if (segs[0] === "conferences" && u.role !== "supervisor" && cur && cur.createdBy !== u.login) fail_("permission-denied", "You can only change conference entries you added.");
       if (action === "update") { if (!cur) fail_("not-found", "That record no longer exists."); data = Object.assign({}, cur, data); }
       putDoc_(path, data); bumpRev_();
+      if (u.role === "supervisor" && segs[0] === "students" && segs.length === 4 && (segs[2] === "tasks" || segs[2] === "papers")) safely_(() => notifyFeedback_(segs[1], segs[2], cur, data));
       return {};
     }
 
@@ -244,6 +250,7 @@ function dispatch_(action, req) {
       if (segs[0] === "conferences") data.createdBy = u.login;   // record who added it, so only they (or the supervisor) can remove it
       const id = Utilities.getUuid().replace(/-/g, "").slice(0, 20);
       putDoc_(segs.join("/") + "/" + id, data); bumpRev_();
+      if (u.role === "supervisor" && segs[0] === "students" && segs[2] === "meetings") safely_(() => notifyMeeting_(segs[1], data));
       return { id: id };
     }
   }
@@ -382,3 +389,142 @@ function endSessionsFor_(login) {
 
 function tooMany_(id) { return Number(CacheService.getScriptCache().get("f:" + id) || 0) >= 10; }
 function noteFailure_(id) { const c = CacheService.getScriptCache(), k = "f:" + id; c.put(k, String(Number(c.get(k) || 0) + 1), 600); }
+
+
+/* ================================================================ email notifications
+ *  • Feedback: sent the moment the supervisor saves a remark on a task or paper, or logs a meeting.
+ *  • Meetings: one email about 15 minutes before each scheduled meeting (students and supervisor).
+ *  • Due dates: one email the day before a task is due (from 9 AM), to whoever the task belongs to.
+ *  Emails go to students' recovery emails and to the supervisor's sign-in email.
+ *  Switch on the timed part once by running  setupNotifications  in the editor.
+ */
+
+function setupNotifications() {
+  ScriptApp.getProjectTriggers().forEach(t => { if (t.getHandlerFunction() === "sendScheduledEmails") ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger("sendScheduledEmails").timeBased().everyMinutes(5).create();
+  Logger.log("Notifications are on: meeting reminders and task due-date reminders are checked every 5 minutes.");
+  Logger.log("Emails left today on this account: " + MailApp.getRemainingDailyQuota());
+}
+
+/** Sends a test email to the supervisor, to check that emails arrive (look in spam the first time). */
+function sendTestEmail() {
+  const to = supervisorEmail_();
+  if (!to) { Logger.log("No supervisor account yet."); return; }
+  sendMail_(to, "Test email", "Supervisor", ["Email notifications from WiNDS Lab Research Tracking are working."], null);
+  Logger.log("Test email sent to " + to);
+}
+
+function safely_(fn) { try { fn(); } catch (e) { console.error("notification failed: " + (e && e.stack || e)); } }
+function isSupEntry_(x) { return x && (x.byRole === "supervisor" || x.byName === "Supervisor"); }
+function supervisorEmail_() { const u = users_().filter(x => x.role === "supervisor")[0]; return u ? u.login : ""; }
+function studentEmail_(key) { const e = String((getDoc_("students/" + key) || {}).email || "").trim(); return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) ? e : ""; }
+function studentName_(key) { return (getDoc_("students/" + key) || {}).name || "Student"; }
+
+function sendMail_(to, subject, greetingName, lines, button) {
+  if (!to) return false;
+  if (MailApp.getRemainingDailyQuota() < 1) { console.warn("Daily email limit reached; skipped: " + subject); return false; }
+  const text = "Hello " + greetingName + ",\n\n" + lines.join("\n") + (button ? "\n\n" + button.text + ": " + button.url : "") + "\n\n— WiNDS Lab Research Tracking";
+  const html = "<p>Hello " + escapeHtml_(greetingName) + ",</p>" + lines.map(l => "<p style=\"margin:0 0 8px\">" + escapeHtml_(l).replace(/\n/g, "<br>") + "</p>").join("") +
+    (button ? "<p style=\"margin-top:16px\"><a href=\"" + button.url + "\" style=\"display:inline-block;padding:10px 16px;background:#1f5f6b;color:#fff;border-radius:6px;text-decoration:none\">" + escapeHtml_(button.text) + "</a></p>" : "") +
+    "<p style=\"color:#5b686e;font-size:12px;margin-top:20px\">WiNDS Lab Research Tracking</p>";
+  MailApp.sendEmail({ to: to, name: "WiNDS Lab Research Tracking", subject: subject, body: text, htmlBody: html });
+  return true;
+}
+const STUDENT_LINK_ = () => ({ text: "Open my page", url: SITE_URL + "student-login.html" });
+const SUP_LINK_ = () => ({ text: "Open dashboard", url: SITE_URL + "supervisor-login.html" });
+
+/** New supervisor remarks on a task or paper (not those made through a meeting log, which has its own email). */
+function notifyFeedback_(key, kind, before, after) {
+  const old = (before && before.history || []).length;
+  const fresh = (after.history || []).slice(old).filter(x => isSupEntry_(x) && x.remark && AUTO_REMARKS.indexOf(x.remark) < 0 && x.via !== "meeting");
+  if (!fresh.length) return;
+  const to = studentEmail_(key); if (!to) return;
+  const what = kind === "tasks" ? "task" : "paper";
+  const lines = ["Your supervisor added feedback on your " + what + " \"" + (after.title || "") + "\":"]
+    .concat(fresh.map(x => "“" + x.remark + "”" + (x.status ? "  (status: " + (x.status === "Currently writing" ? "Draft" : x.status) + (kind === "tasks" ? ", " + (x.progress || 0) + "%" : "") + ")" : "")));
+  sendMail_(to, "Supervisor feedback on your " + what + ": " + (after.title || ""), studentName_(key), lines, STUDENT_LINK_());
+}
+
+/** A meeting logged by the supervisor: notes, task-wise and paper-wise remarks, new tasks. */
+function notifyMeeting_(key, m) {
+  const remarks = (m.updates || []).filter(u => u.remark).map(u => "• " + u.title + ": " + u.remark)
+    .concat((m.paperUpdates || []).filter(u => u.remark).map(u => "• " + u.title + ": " + u.remark));
+  const newTasks = (m.newTasks || []).map(t => "• " + t.title + (t.due ? " (due " + t.due + ")" : ""));
+  if (!m.notes && !remarks.length && !newTasks.length) return;
+  const to = studentEmail_(key); if (!to) return;
+  const lines = ["Your supervisor recorded the meeting of " + m.date + "."];
+  if (m.notes) lines.push("Notes:\n" + m.notes);
+  if (remarks.length) lines.push("Feedback:\n" + remarks.join("\n"));
+  if (newTasks.length) lines.push("New tasks:\n" + newTasks.join("\n"));
+  if (m.next) lines.push("Next meeting: " + m.next);
+  sendMail_(to, "Meeting notes and feedback (" + m.date + ")", studentName_(key), lines, STUDENT_LINK_());
+}
+
+function istDate_(date, time) { return Utilities.parseDate(date + " " + (time || "00:00"), TZ, "yyyy-MM-dd HH:mm"); }
+function istToday_() { return Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd"); }
+function istHour_() { return Number(Utilities.formatDate(new Date(), TZ, "H")); }
+function plusDays_(date, n) { return Utilities.formatDate(new Date(istDate_(date, "12:00").getTime() + n * 864e5), TZ, "yyyy-MM-dd"); }
+function niceWhen_(date, time) { return Utilities.formatDate(istDate_(date, time || "00:00"), TZ, time ? "EEE d MMM yyyy, h:mm a" : "EEE d MMM yyyy"); }
+
+/** Runs every 5 minutes (see setupNotifications). */
+function sendScheduledEmails() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return;
+  try {
+    DOCS_ = null;
+    const now = Date.now(), today = istToday_(), tomorrow = plusDays_(today, 1), hour = istHour_();
+    const sup = supervisorEmail_(), cache = CacheService.getScriptCache();
+    let changed = false, sent = 0;
+    const MAX_PER_RUN = 40;
+    const docs = loadDocs_().list.slice();
+
+    for (const d of docs) {
+      if (sent >= MAX_PER_RUN) break;
+      const segs = d.path.split("/"), x = d.data;
+
+      // 1) scheduled meetings: each student's copy, plus one email to the supervisor per meeting
+      if (segs[0] === "students" && segs[2] === "schedule" && x.date && x.time && !x.reminderSent) {
+        const mins = (istDate_(x.date, x.time).getTime() - now) / 60000;
+        if (mins > 0 && mins <= MEETING_NOTICE_MIN) {
+          const lines = [(x.kind === "group" ? "Group meeting" : "Meeting with your supervisor") + " starts at " + niceWhen_(x.date, x.time) + "."];
+          if (x.agenda) lines.push("Agenda:\n" + x.agenda);
+          if (x.location) lines.push("Place: " + x.location);
+          const btn = x.link ? { text: "Join meeting", url: x.link } : STUDENT_LINK_();
+          if (sendMail_(studentEmail_(segs[1]), "Reminder: meeting in 15 minutes", studentName_(segs[1]), lines, btn)) sent++;
+          x.reminderSent = true; putDoc_(d.path, x); changed = true;
+          const gk = "supmeet:" + (x.groupId || d.path);
+          if (sup && !cache.get(gk)) {
+            cache.put(gk, "1", 21600);
+            const who = x.kind === "group" ? "Group meeting with " + (x.attendees || []).map(studentName_).join(", ") : "Meeting with " + studentName_(segs[1]);
+            if (sendMail_(sup, "Reminder: meeting in 15 minutes", "Supervisor", [who + " at " + niceWhen_(x.date, x.time) + "."].concat(x.agenda ? ["Agenda:\n" + x.agenda] : []), x.link ? { text: "Join meeting", url: x.link } : SUP_LINK_())) sent++;
+          }
+        }
+      }
+
+      // 2) the supervisor's own reminders (with a time): 15 minutes before
+      if (segs[0] === "supervisor" && segs[2] === "items" && x.kind === "reminder" && !x.done && x.date && x.time && !x.reminderSent) {
+        const mins = (istDate_(x.date, x.time).getTime() - now) / 60000;
+        if (mins > 0 && mins <= MEETING_NOTICE_MIN) {
+          if (sendMail_(sup, "Reminder: " + x.title + " in 15 minutes", "Supervisor", [x.title + " at " + niceWhen_(x.date, x.time) + "."].concat(x.location ? ["Place: " + x.location] : [], x.notes ? [x.notes] : []), x.link ? { text: "Join", url: x.link } : SUP_LINK_())) sent++;
+          x.reminderSent = true; putDoc_(d.path, x); changed = true;
+        }
+      }
+
+      // 3) one reminder the day before a task is due (from 9 AM), to whoever the task belongs to
+      if (hour >= DUE_REMINDER_HOUR) {
+        if (segs[0] === "students" && segs[2] === "tasks" && x.due === tomorrow && x.status !== "Done" && x.dueReminded !== x.due) {
+          const forSup = x.owner === "supervisor";
+          const lines = [(forSup ? "Your task for " + studentName_(segs[1]) : "Your task") + " \"" + x.title + "\" is due tomorrow (" + niceWhen_(x.due) + ").",
+            "Current status: " + (x.status || "Not started") + ", " + (x.progress || 0) + "% done."];
+          if (sendMail_(forSup ? sup : studentEmail_(segs[1]), "Due tomorrow: " + x.title, forSup ? "Supervisor" : studentName_(segs[1]), lines, forSup ? SUP_LINK_() : STUDENT_LINK_())) sent++;
+          x.dueReminded = x.due; putDoc_(d.path, x); changed = true;
+        }
+        if (segs[0] === "supervisor" && segs[2] === "items" && x.kind === "task" && !x.done && x.date === tomorrow && x.dueReminded !== x.date) {
+          if (sendMail_(sup, "Due tomorrow: " + x.title, "Supervisor", ["Your task \"" + x.title + "\" is due tomorrow (" + niceWhen_(x.date, x.time) + ")."].concat(x.notes ? [x.notes] : []), SUP_LINK_())) sent++;
+          x.dueReminded = x.date; putDoc_(d.path, x); changed = true;
+        }
+      }
+    }
+    if (changed) bumpRev_();
+  } finally { SpreadsheetApp.flush(); lock.releaseLock(); }
+}

@@ -56,6 +56,15 @@ Send them `https://winds-phd.github.io/register.html` and the lab code. They reg
 ## Sections on each student's page
 Tasks (blue) · Publications (green) · Paper details: titles and links to read or cite (violet) · Conferences: shared by the whole group, anyone can add (rose) · Meetings (peach). Supervisor feedback is highlighted in yellow wherever it appears.
 
+## Email notifications
+Sent from the Gmail account that owns the Apps Script, to students' **recovery email** and to the supervisor's sign-in email:
+- **Supervisor feedback:** the moment you save a remark on a student's task or paper, or log a meeting with notes, remarks or new tasks.
+- **Meetings:** about 15 minutes before each scheduled meeting (each invited student, and you), and before your own Reminders.
+- **Due dates:** one email the day before a task is due (from 9 AM), to the student or to you, depending on who the task belongs to. Not sent for tasks already Done.
+
+**Turn it on once:** in the Apps Script editor choose **`setupNotifications`** → **Run** → allow the permissions. To check emails arrive, run **`sendTestEmail`** (look in spam the first time).
+Free Gmail allows about 100 email recipients a day; a group meeting with 10 students counts as 10.
+
 ## Good to know
 - **Your data** is the Google Sheet in your Drive (tabs: `docs`, `users`, `sessions`). Don't edit it by hand while people are using the site. Passwords and passwords are stored only as salted hashes.
 - **Back up:** in Google Sheets, **File → Make a copy** (or File → Download).
