@@ -28,7 +28,7 @@ const PTYPES = ["Journal article", "Conference paper", "Review article", "Book c
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
-const S = { isOwner: false, myRole: "student", confs: [], refs: [], papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
+const S = { schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag); let val;
@@ -117,6 +117,9 @@ function renderRoster() {
     h("button", { class: "r-item r-conf", type: "button", "aria-current": S.sel === "__confs" ? "true" : "false", onclick: () => select("__confs") },
       h("span", { class: "nm", text: "Upcoming conferences" }),
       h("span", { class: "meta", text: (() => { const n = (S.confs || []).filter(c => !c.deadline || diff(todayStr(), c.deadline) >= 0).length; return n ? plural(n, "upcoming deadline") : "Add and view conference deadlines"; })() })),
+    h("button", { class: "r-item r-sched", type: "button", "aria-current": S.sel === "__sched" ? "true" : "false", onclick: () => select("__sched") },
+      h("span", { class: "nm", text: "Scheduled meetings" }),
+      h("span", { class: "meta", text: (() => { const n = upcomingSched().length; return n ? plural(n, "upcoming meeting") : "Plan group or individual meetings"; })() })),
     h("div", { class: "roster-sep label", text: "Students" })];
   for (const s of [...S.students].sort((a, b) => a.name.localeCompare(b.name))) {
     const l = lastMeeting(s.id), mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), od = open.filter(isOverdue).length;
@@ -344,6 +347,7 @@ function buildStudent(s) {
         s.topic ? h("p", { class: "topic", text: s.topic }) : null,
         S.canWrite ? emailRow(s) : null),
       h("div", { class: "s-controls" }, h("label", { class: "fieldlabel" }, "Course", stageSel), S.isOwner ? resetBox(s) : null, rm)),
+    h("div", { id: "next-banner" }),
     h("div", { class: "s-figs", id: "s-figs" }));
 
   /* new task */
@@ -419,7 +423,10 @@ function buildStudent(s) {
     refs: h("div", { class: "tabpane", "data-pane": "refs" }, refsPanel),
     confs: S.isOwner ? null : h("div", { class: "tabpane", "data-pane": "confs" }, confPanelEl()),
     papers: h("div", { class: "tabpane", "data-pane": "papers" }, papersPanel),
-    meetings: h("div", { class: "tabpane", "data-pane": "meetings" }, h("div", { class: "cols" }, meetPanel, logPanel)) };
+    meetings: h("div", { class: "tabpane", "data-pane": "meetings" },
+      h("section", { class: "panel sec-meet" }, h("div", { class: "panel-head" }, h("h3", { text: "Scheduled meetings" }), h("span", { class: "muted", id: "stu-sched-count" })),
+        h("ul", { class: "refs", id: "stu-sched" })),
+      h("div", { class: "cols" }, meetPanel, logPanel)) };
   const tabBtn = (k, l) => h("button", { type: "button", role: "tab", "data-tab": k, class: "tab-" + k, "aria-selected": S.tab === k ? "true" : "false",
     onclick: () => { S.tab = k; showTab(); } }, l, h("span", { class: "n", id: "tabn-" + k }));
   const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Paper details"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"));
@@ -702,6 +709,103 @@ function confItem(c) {
       c.note ? h("p", { class: "ref-note", text: c.note }) : null),
     del);
 }
+/* ---------- scheduled meetings (supervisor plans; each invited student gets a copy in their own record) ---------- */
+function nowKey() { const d = new Date(); return todayStr() + "T" + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+function schedKey(x) { return (x.date || "") + "T" + (x.time || "23:59"); }
+/** One entry per meeting (the copies share a groupId); optionally only those that include one student. */
+function allSched(sid) {
+  const by = new Map();
+  for (const x of S.schedule || []) { if (sid && x.studentId !== sid) continue; const k = x.groupId || x.id; if (!by.has(k)) by.set(k, { ...x, copies: [] }); by.get(k).copies.push(x); }
+  return [...by.values()].sort((a, b) => schedKey(a).localeCompare(schedKey(b)));
+}
+function upcomingSched(sid) { const now = nowKey(); return allSched(sid).filter(x => schedKey(x) >= now); }
+function fmtTime(t) { if (!t) return ""; const [hh, mm] = t.split(":").map(Number); const ap = hh >= 12 ? "PM" : "AM"; return ((hh % 12) || 12) + ":" + String(mm).padStart(2, "0") + " " + ap; }
+function whenText(x) { const d = diff(todayStr(), x.date); return (d === 0 ? "Today" : d === 1 ? "Tomorrow" : parseD(x.date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })) + (x.time ? ", " + fmtTime(x.time) : ""); }
+function nextBanner(x) {
+  return h("div", { class: "next-meet" },
+    h("div", null, h("div", { class: "label", text: "Next meeting" + (x.kind === "group" ? " · group" : "") }), h("b", { text: whenText(x) }), x.agenda ? h("div", { class: "ref-note", text: x.agenda.split("\n")[0] }) : null),
+    x.link ? h("a", { class: "btn small", href: x.link, target: "_blank", rel: "noopener", text: "Join ↗" }) : null);
+}
+function schedItem(x, showPeople) {
+  const names = (x.attendees || []).map(k => studentName(k));
+  let armed = null;
+  const cancel = S.isOwner ? h("button", { class: "x", type: "button", text: "Cancel meeting" }) : null;
+  if (cancel) cancel.onclick = () => {
+    if (!armed) { cancel.textContent = "Confirm cancel"; armed = setTimeout(() => { armed = null; cancel.textContent = "Cancel meeting"; }, 4000); return; }
+    clearTimeout(armed);
+    write(async db => { for (const c of x.copies) await db.doc("students/" + c.studentId + "/schedule/" + c.id).delete(); }, "Meeting cancelled");
+  };
+  const d = diff(todayStr(), x.date);
+  return h("li", { class: "ref sched" + (schedKey(x) < nowKey() ? " past" : "") },
+    h("div", { class: "conf-date sched-date" }, h("b", { text: parseD(x.date).getDate() }), h("span", { text: parseD(x.date).toLocaleDateString("en-IN", { month: "short" }) + (x.time ? " · " + fmtTime(x.time) : "") })),
+    h("div", { style: "min-width:0;flex:1" },
+      h("div", { class: "t-sub", style: "margin-top:0" }, h("span", { class: "chip " + (x.kind === "group" ? "" : "plain"), text: x.kind === "group" ? "Group meeting" : "Individual meeting" }),
+        d >= 0 && d <= 1 ? h("span", { class: "chip warn", text: d === 0 ? "Today" : "Tomorrow" }) : null,
+        x.location ? h("span", { class: "who", text: x.location }) : null),
+      x.agenda ? h("p", { class: "sched-agenda", text: x.agenda }) : h("p", { class: "note", text: "No agenda given." }),
+      showPeople ? h("div", { class: "who", text: "With: " + (x.everyone ? "all students" : names.join(", ")) }) : null),
+    h("div", { style: "display:grid;gap:6px;justify-items:end" },
+      x.link ? h("a", { class: "btn small", href: x.link, target: "_blank", rel: "noopener", text: "Join ↗" }) : null, cancel));
+}
+let schedEl = null;
+function schedPage() {
+  if (schedEl) { refreshPicker(); return schedEl; }
+  const kind = h("select", { id: "ns-kind", onchange: () => refreshPicker() }, h("option", { value: "individual", text: "Individual (one student)" }), h("option", { value: "group", text: "Group (several or all students)" }));
+  const form = h("form", { class: "edit-box", onsubmit: async e => {
+      e.preventDefault();
+      const k = kind.value, date = val("ns-date"), time = val("ns-time"), agenda = val("ns-agenda").trim(), location = val("ns-loc").trim();
+      let link = val("ns-link").trim(); if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
+      const everyone = k === "group" && document.getElementById("ns-all").checked;
+      const people = k === "individual" ? [val("ns-one")].filter(Boolean) : everyone ? S.students.map(s => s.id) : [...document.querySelectorAll("#ns-people input:checked")].map(i => i.value);
+      if (!date || !time) { say("Choose the date and time."); return; }
+      if (!people.length) { say(k === "individual" ? "Choose the student." : "Choose at least one student, or tick All students."); return; }
+      if (k === "group" && !everyone && people.length < 2) { say("A group meeting needs two or more students. Use Individual for one student."); return; }
+      const groupId = "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const data = { groupId, kind: k, everyone, attendees: people, date, time, agenda, link, location, createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole };
+      const ok = await write(async db => { for (const sid of people) await db.doc("students/" + sid + "/schedule/" + groupId).set({ ...data, studentId: sid }); },
+        (k === "group" ? "Group meeting" : "Meeting") + " scheduled. " + (people.length === 1 ? "The student sees it" : plural(people.length, "student") + " see it") + " on their page.");
+      if (ok) { ["ns-agenda", "ns-link", "ns-loc", "ns-time"].forEach(id => document.getElementById(id).value = ""); }
+    } },
+    h("h4", { text: "Schedule a meeting" }),
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "Meeting type", kind),
+      h("label", { class: "fieldlabel" }, "Date", h("input", { id: "ns-date", type: "date", value: todayStr() })),
+      h("label", { class: "fieldlabel" }, "Time", h("input", { id: "ns-time", type: "time" }))),
+    h("div", { id: "ns-who" }),
+    h("label", { class: "fieldlabel" }, "Agenda", h("textarea", { id: "ns-agenda", rows: "3", maxlength: "2000", placeholder: "1. Progress on chapter 3\n2. Conference submission plan\n3. Any other business" })),
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "Online meeting link (Google Meet, Zoom, Teams)", h("input", { id: "ns-link", type: "text", inputmode: "url", maxlength: "500", placeholder: "https://meet.google.com/…" })),
+      h("label", { class: "fieldlabel" }, "Room / place (optional)", h("input", { id: "ns-loc", maxlength: "120", placeholder: "e.g. Lab 204, or Online" }))),
+    h("div", null, h("button", { class: "btn", type: "submit", text: "Schedule meeting" })));
+  schedEl = h("div", { class: "tabpane" },
+    h("section", { class: "panel sec-meet" },
+      h("div", { class: "panel-head" }, h("h3", { text: "Scheduled meetings" }), h("span", { class: "muted", id: "sched-count" })),
+      h("p", { class: "note", text: "Invited students see the date, time, agenda and Join link on their own page. Each student only sees meetings they're invited to." }),
+      h("ul", { class: "refs", id: "sched-list" }), form));
+  refreshPicker();
+  return schedEl;
+}
+function refreshPicker() {
+  const box = schedEl && schedEl.querySelector("#ns-who"); if (!box) return;
+  const kind = val("ns-kind") || "individual", studs = [...S.students].sort((a, b) => a.name.localeCompare(b.name));
+  if (box.dataset.sig === kind + "|" + studs.map(s => s.id).join(",")) return;
+  box.dataset.sig = kind + "|" + studs.map(s => s.id).join(",");
+  if (!studs.length) { box.replaceChildren(h("p", { class: "note", text: "No students yet. They appear here once they register." })); return; }
+  if (kind === "individual") { box.replaceChildren(h("label", { class: "fieldlabel" }, "Student", h("select", { id: "ns-one" }, studs.map(s => h("option", { value: s.id, text: s.name + (s.admissionNo ? " (" + s.admissionNo + ")" : "") }))))); return; }
+  const all = h("input", { type: "checkbox", id: "ns-all", checked: true, onchange: e => { box.querySelector("#ns-people").hidden = e.target.checked; } });
+  box.replaceChildren(h("div", { class: "fieldlabel" }, "Students",
+    h("label", { class: "check" }, all, " All students (" + studs.length + ")"),
+    h("div", { id: "ns-people", class: "people", hidden: true }, studs.map(s => h("label", { class: "check" }, h("input", { type: "checkbox", value: s.id }), " " + s.name)))));
+}
+function refreshSched() {
+  const list = document.getElementById("sched-list"); if (!list) return;
+  refreshPicker();
+  const all = allSched(), now = nowKey(), up = all.filter(x => schedKey(x) >= now), past = all.filter(x => schedKey(x) < now).reverse();
+  document.getElementById("sched-count").textContent = up.length + " upcoming";
+  list.replaceChildren(...(up.length ? up.map(x => schedItem(x, true)) : [h("li", null, h("p", { class: "note", text: "Nothing scheduled. Add a meeting below." }))]),
+    ...(past.length ? [h("li", null, h("details", { class: "sub" }, h("summary", { text: plural(past.length, "past meeting") }), h("ul", { class: "refs", style: "margin-top:8px" }, past.slice(0, 30).map(x => schedItem(x, true)))))] : []));
+}
+
 function refreshConfs() {
   const list = document.getElementById("conf-list"); if (!list) return;
   const all = [...(S.confs || [])];
@@ -735,7 +839,12 @@ function refreshStudent(s) {
   const sel = document.getElementById("course-" + s.id); if (sel && document.activeElement !== sel) sel.value = courseOf(s);
   const mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), done = mine.filter(isDone), ms = S.meetings.filter(m => m.studentId === s.id);
   const avg = avgDays(mine), late = done.filter(t => metrics(t).late > 0).length, l = lastMeeting(s.id);
-  const nextM = ms.map(m => m.next).filter(Boolean).sort().pop();
+  const mySched = upcomingSched(s.id);
+  const nextM = [...ms.map(m => m.next).filter(n => n && n >= todayStr()), ...mySched.map(x => x.date)].sort()[0];
+  document.getElementById("next-banner").replaceChildren(...(mySched[0] ? [nextBanner(mySched[0])] : []));
+  document.getElementById("stu-sched-count").textContent = mySched.length ? mySched.length + " upcoming" : "";
+  document.getElementById("stu-sched").replaceChildren(...(mySched.length ? mySched.map(x => schedItem(x, false))
+    : [h("li", null, h("p", { class: "note", text: S.isOwner ? "Nothing scheduled with this student. Use \"Scheduled meetings\" in the left column." : "No meetings scheduled. Your supervisor's invitations will appear here." }))]));
   document.getElementById("s-figs").replaceChildren(
     stat(open.length, "Open tasks"), stat(open.filter(isOverdue).length, "Overdue", open.filter(isOverdue).length), stat(done.length, "Completed"),
     stat(avg == null ? "—" : avg + "d", "Avg. days to finish"), stat(done.length ? (done.length - late) + "/" + done.length : "—", "Finished on time"),
@@ -800,6 +909,10 @@ let builtFor = null;
 function renderDetail(force) {
   if (!S.isOwner && S.sel === null && S.loaded >= NCOLL && S.students.length) S.sel = S.students[0].id;
   if (S.sel === null) { builtFor = null; renderOverview(); return; }
+  if (S.sel === "__sched") {
+    if (builtFor !== "__sched" || force) { document.getElementById("detail").replaceChildren(schedPage()); builtFor = "__sched"; }
+    refreshSched(); return;
+  }
   if (S.sel === "__confs") {
     if (builtFor !== "__confs" || force) { document.getElementById("detail").replaceChildren(confPanelEl()); builtFor = "__confs"; }
     refreshConfs(); return;
@@ -819,11 +932,11 @@ function select(id, taskId) { S.sel = id; builtFor = null; S.filter = "all"; ren
 
 /* ---------- start-up: sign-in check, role, live data ---------- */
 const subs = {};
-function rebuildFlat() { for (const k of ["tasks", "meetings", "papers", "refs"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []); }
+function rebuildFlat() { for (const k of ["tasks", "meetings", "papers", "refs", "schedule"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []); }
 function watchStudent(sid) {
   if (subs[sid]) return;
   const entry = subs[sid] = { data: {}, un: [] };
-  for (const k of ["tasks", "meetings", "papers", "refs"]) entry.un.push(S.db.collection(C(k, sid)).onSnapshot(snap => {
+  for (const k of ["tasks", "meetings", "papers", "refs", "schedule"]) entry.un.push(S.db.collection(C(k, sid)).onSnapshot(snap => {
     entry.data[k] = snap.docs.map(doc => ({ ...doc.data(), id: doc.id, studentId: sid })); rebuildFlat(); renderAll();
   }, err => say("Couldn't load some " + k + ". Reload the page to try again.")));
 }

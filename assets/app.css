@@ -293,3 +293,17 @@ details.more .more-body { display: grid; gap: 10px; margin-top: 10px; }
 .pc span { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 600; color: var(--muted); }
 .pc-draft b { color: var(--muted); } .pc-sub b { color: var(--warn); } .pc-acc b { color: var(--good); } .pc-rej b { color: var(--bad); }
 tr.stage-row td { background: var(--surface); color: var(--pubs-ink); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; padding: 8px 10px; }
+
+/* scheduled meetings */
+.r-item.r-sched .nm { color: var(--meet-ink); }
+.r-item.r-sched[aria-current="true"] { border-color: var(--meet-ink); box-shadow: inset 3px 0 0 var(--meet-ink); background: var(--meet-bg); }
+.sec-meet .ref { border-color: var(--meet-line); }
+.sched-date { background: var(--meet-bg); min-width: 74px; }
+.sched-date b { color: var(--meet-ink); }
+.sched-agenda { margin: 6px 0 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sched.past { opacity: 0.7; }
+.next-meet { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--meet-bg); border: 1px solid var(--meet-line); border-radius: 8px; padding: 10px 14px; }
+.next-meet b { font-size: 1rem; }
+.check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 0.92rem; }
+.check input { width: auto; }
+.people { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 6px 0; }
