@@ -37,7 +37,7 @@ google-apps-script/Code.gs   the backend that stores data in your Drive
 1. Open **`assets/config.js`** and paste the Web app URL into `API_URL`.
 2. On GitHub: **New repository** (e.g. `phd-log`, Public) → **Add file → Upload files** → drag in *everything in this folder* (keep the `assets` folder) → **Commit**.
 3. Repository **Settings → Pages** → Source: **Deploy from a branch** → Branch **main**, folder **/ (root)** → **Save**.
-4. After a minute your site is at **`https://YOUR-USERNAME.github.io/phd-log/`**.
+4. After a minute your site is at **https://winds-phd.github.io/**.
 
 ## Part C — First sign-in
 
@@ -46,7 +46,7 @@ google-apps-script/Code.gs   the backend that stores data in your Drive
 3. You're on the dashboard. The **class code is 67890** (change it in the left column).
 
 ## Students
-Send them `https://YOUR-USERNAME.github.io/phd-log/register.html` and the class code. They register once, then sign in on the main page with **admission number + secret code**. Each student sees only their own record; the Apps Script checks this on every request.
+Send them `https://winds-phd.github.io/register.html` and the class code. They register once, then sign in on the main page with **admission number + secret code**. Each student sees only their own record; the Apps Script checks this on every request.
 
 ## Good to know
 - **Your data** is the Google Sheet in your Drive (tabs: `docs`, `users`, `sessions`). Don't edit it by hand while people are using the site. Secret codes and passwords are stored only as salted hashes.
