@@ -52,6 +52,7 @@ function newSetupKey() {
   const props = PropertiesService.getScriptProperties();
   const sh = sheet_("users"), v = sh.getDataRange().getValues();
   for (let r = v.length - 1; r >= 1; r--) if (v[r][1] === "supervisor") sh.deleteRow(r + 1);
+  usersChanged_();
   props.setProperty("SETUP_KEY", randomCode_(10));
   Logger.log("Supervisor login removed. Open the site and create it again with SETUP KEY: " + props.getProperty("SETUP_KEY"));
 }
@@ -219,12 +220,12 @@ function dispatch_(action, req) {
       if (!canSee_(u, segs)) fail_("permission-denied", "You don't have access to this record.");
       let data = req.data;
       if (!data || typeof data !== "object" || Array.isArray(data)) fail_("invalid-argument", "A record must be an object.");
-      const cur = getDoc_(path);
+      const cur = getDoc_(path), prevRev = currentRev_();
       if (segs[0] === "conferences" && u.role !== "supervisor" && cur && cur.createdBy !== u.login) fail_("permission-denied", "You can only change conference entries you added.");
       if (action === "update") { if (!cur) fail_("not-found", "That record no longer exists."); data = Object.assign({}, cur, data); }
-      putDoc_(path, data); bumpRev_();
+      putDoc_(path, data); const rev = bumpRev_();
       if (u.role === "supervisor" && segs[0] === "students" && segs.length === 4 && (segs[2] === "tasks" || segs[2] === "papers")) safely_(() => notifyFeedback_(segs[1], segs[2], cur, data));
-      return {};
+      return { prevRev: prevRev, rev: rev };
     }
 
     case "delete": {
@@ -233,13 +234,13 @@ function dispatch_(action, req) {
       if (u.role === "student" && segs[0] === "students" && segs.length === 2) fail_("permission-denied", "Only the supervisor can remove a student.");
       if (u.role === "student" && segs[0] === "students" && segs[2] === "tasks") fail_("permission-denied", "Only the supervisor can delete tasks.");
       if (segs[0] === "conferences" && u.role !== "supervisor" && (getDoc_(path) || {}).createdBy !== u.login) fail_("permission-denied", "You can only remove conference entries you added.");
+      const prevRev = currentRev_();
       deleteDoc_(path);
       if (u.role === "supervisor" && segs.length === 2 && segs[0] === "students") {
         deletePrefix_(path + "/");
         deleteUser_("student:" + segs[1]);
       }
-      bumpRev_();
-      return {};
+      return { prevRev: prevRev, rev: bumpRev_() };
     }
 
     case "add": {
@@ -248,10 +249,13 @@ function dispatch_(action, req) {
       const data = req.data;
       if (!data || typeof data !== "object" || Array.isArray(data)) fail_("invalid-argument", "A record must be an object.");
       if (segs[0] === "conferences") data.createdBy = u.login;   // record who added it, so only they (or the supervisor) can remove it
-      const id = Utilities.getUuid().replace(/-/g, "").slice(0, 20);
-      putDoc_(segs.join("/") + "/" + id, data); bumpRev_();
+      const want = String(req.id || "");
+      const id = SEGMENT.test(want) && want.length <= 40 ? want : Utilities.getUuid().replace(/-/g, "").slice(0, 20);
+      if (getDoc_(segs.join("/") + "/" + id)) return { id: id, prevRev: currentRev_(), rev: currentRev_() };   // already saved: a repeated click or retry
+      const prevRev = currentRev_();
+      putDoc_(segs.join("/") + "/" + id, data); const rev = bumpRev_();
       if (u.role === "supervisor" && segs[0] === "students" && segs[2] === "meetings") safely_(() => notifyMeeting_(segs[1], data));
-      return { id: id };
+      return { id: id, prevRev: prevRev, rev: rev };
     }
   }
   fail_("invalid-argument", "Unknown action.");
@@ -276,11 +280,15 @@ function colPath_(p) { const s = splitPath_(p); if (!(s.length % 2)) fail_("inva
 
 /* ================================================================ storage: the "docs" sheet */
 
-let DOCS_ = null;
+let DOCS_ = null, SS_ = null, SHEETS_ = {};
 function sheet_(name) {
-  const id = PropertiesService.getScriptProperties().getProperty("SHEET_ID");
-  if (!id) fail_("not-set-up", "The backend isn't set up yet. Run init in the Apps Script editor.");
-  return SpreadsheetApp.openById(id).getSheetByName(name);
+  if (SHEETS_[name]) return SHEETS_[name];
+  if (!SS_) {
+    const id = PropertiesService.getScriptProperties().getProperty("SHEET_ID");
+    if (!id) fail_("not-set-up", "The backend isn't set up yet. Run init in the Apps Script editor.");
+    SS_ = SpreadsheetApp.openById(id);
+  }
+  return (SHEETS_[name] = SS_.getSheetByName(name));
 }
 function loadDocs_() {
   if (DOCS_) return DOCS_;
@@ -314,7 +322,7 @@ function deletePrefix_(prefix) {
   DOCS_ = null;
 }
 function currentRev_() { return PropertiesService.getScriptProperties().getProperty("REV") || "0"; }
-function bumpRev_() { PropertiesService.getScriptProperties().setProperty("REV", Date.now() + "-" + Math.floor(Math.random() * 1e6)); }
+function bumpRev_() { const r = Date.now() + "-" + Math.floor(Math.random() * 1e6); PropertiesService.getScriptProperties().setProperty("REV", r); return r; }
 
 /* ================================================================ accounts and sessions */
 
@@ -325,25 +333,34 @@ function sha_(s) { return hex_(Utilities.computeDigest(Utilities.DigestAlgorithm
 function hashSecret_(secret, salt) { let h = salt + ":" + secret; for (let i = 0; i < HASH_ROUNDS; i++) h = sha_(h + ":" + salt); return h; }
 function randomCode_(n) { const a = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let s = ""; for (let i = 0; i < n; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
 
+let USERS_ = null;
 function users_() {
+  if (USERS_) return USERS_;
+  const cache = CacheService.getScriptCache(), hit = cache.get("users");
+  if (hit) { try { return (USERS_ = JSON.parse(hit)); } catch (e) { /* rebuild */ } }
   const v = sheet_("users").getDataRange().getValues(), out = [];
-  for (let r = 1; r < v.length; r++) if (v[r][0]) out.push({ login: String(v[r][0]), role: v[r][1], name: v[r][2], salt: v[r][3], hash: v[r][4], row: r + 1 });
-  return out;
+  for (let r = 1; r < v.length; r++) if (v[r][0]) out.push({ login: String(v[r][0]), role: v[r][1], name: v[r][2], salt: String(v[r][3]), hash: String(v[r][4]), row: r + 1 });
+  const json = JSON.stringify(out);
+  if (json.length < 90000) cache.put("users", json, 600);
+  return (USERS_ = out);
 }
+function usersChanged_() { USERS_ = null; CacheService.getScriptCache().remove("users"); }
 function findUser_(login) { return users_().filter(u => u.login === login)[0] || null; }
 function supervisorExists_() { try { return users_().some(u => u.role === "supervisor"); } catch (e) { return false; } }
 function createUser_(login, role, name, secret) {
   const salt = Utilities.getUuid().replace(/-/g, "");
   sheet_("users").appendRow([login, role, name, salt, hashSecret_(secret, salt), new Date().toISOString()]);
+  usersChanged_();
 }
 function setSecret_(login, secret) {
   const u = findUser_(login), salt = Utilities.getUuid().replace(/-/g, "");
   sheet_("users").getRange(u.row, 4, 1, 2).setValues([[salt, hashSecret_(secret, salt)]]);
+  usersChanged_();
   endSessionsFor_(login);
 }
 function deleteUser_(login) {
   const u = findUser_(login);
-  if (u) sheet_("users").deleteRow(u.row);
+  if (u) { sheet_("users").deleteRow(u.row); usersChanged_(); }
   endSessionsFor_(login);
 }
 function publicUser_(u) {

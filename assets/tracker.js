@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1610";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1940";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -30,6 +30,18 @@ const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
 const S = { mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
+/** Wraps a form's submit handler: while it is saving, further clicks/Enter are ignored and the buttons are locked. */
+function guardSubmit(handler) {
+  return async function (e) {
+    const form = e.currentTarget;
+    if (form.dataset.busy) { e.preventDefault(); return; }
+    form.dataset.busy = "1";
+    const btns = [...form.querySelectorAll("button[type=submit], button:not([type])")];
+    btns.forEach(b => { b.disabled = true; b.dataset.label = b.textContent; if (b.type === "submit") b.textContent = "Saving…"; });
+    try { await handler(e); }
+    finally { delete form.dataset.busy; btns.forEach(b => { b.disabled = false; if (b.dataset.label) b.textContent = b.dataset.label; }); }
+  };
+}
 function h(tag, props, ...kids) {
   const el = document.createElement(tag); let val;
   if (props) for (const [k, v] of Object.entries(props)) {
@@ -39,6 +51,7 @@ function h(tag, props, ...kids) {
     else if (k === "value") val = v;
     else if (k === "checked") el.checked = !!v;
     else if (k === "open") el.open = !!v;
+    else if (k === "onsubmit") el.addEventListener("submit", guardSubmit(v));
     else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v === true ? "" : v);
   }
@@ -504,6 +517,7 @@ function quickToggle(t) {
   const btn = h("button", { type: "button", class: "btn small " + (isDone(t) ? "danger" : "ghost"), text: isDone(t) ? "Mark as not done" : "Mark as done" });
   btn.onclick = async e => {
     e.preventDefault(); e.stopPropagation();   // don't open/close the card
+    if (btn.disabled) return; btn.disabled = true;
     const date = todayStr();
     if (isDone(t)) {
       // back to where it was before it was marked done

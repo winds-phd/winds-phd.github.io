@@ -1,6 +1,6 @@
 // Talks to the Google Apps Script backend (data lives in a Google Sheet in the supervisor's Drive).
 // Provides sign-in helpers and a small live data layer used by every page.
-import { API_URL } from "./config.js?v=20261109-1610";
+import { API_URL } from "./config.js?v=20261109-1940";
 
 export const configured = !String(API_URL).startsWith("PASTE_") && /^https:\/\//.test(API_URL);
 const TOKEN_KEY = "phdlog.token";
@@ -55,7 +55,7 @@ async function sync() {
   syncing = (async () => {
     try {
       const j = await call("sync", { rev });
-      if (!j.unchanged) { cache.clear(); for (const d of j.docs) cache.set(d.path, d.data); rev = j.rev; }
+      if (!j.unchanged) { cache.clear(); for (const d of j.docs) cache.set(d.path, d.data); rev = j.rev; applyPending(); }
       synced = true;
       for (const w of watchers) w.ok();
       emit();
@@ -90,27 +90,49 @@ function childrenOf(col) {
   for (const [p, d] of cache) if (p.startsWith(col + "/") && p.split("/").length === depth) out.push({ id: p.split("/").pop(), path: p, d });
   return out.sort((a, b) => a.id < b.id ? -1 : 1);
 }
-async function change(action, payload, local) {
-  const j = await call(action, payload);
-  local(j); rev = null; emit(); sync();
-  return j;
+/* Saving: the change shows on screen at once ("optimistic"), then goes to the server.
+   Until the server confirms it, a background refresh can't make it disappear. */
+const pending = new Map();   // path -> { op: "put", data } | { op: "del" }
+function applyPending() {
+  for (const [p, x] of pending) {
+    if (x.op === "put") cache.set(p, x.data);
+    else { cache.delete(p); for (const k of [...cache.keys()]) if (k.startsWith(p + "/")) cache.delete(k); }
+  }
 }
+async function change(action, payload, paths) {
+  const mine = Symbol();
+  for (const [p, x] of paths) pending.set(p, { ...x, mine });
+  applyPending(); emit();
+  try {
+    const j = await call(action, payload);
+    // Nothing else changed on the server in between: our copy is now exactly the server's, no reload needed.
+    if (j.prevRev && j.prevRev === rev) rev = j.rev; else { rev = null; }
+    return j;
+  } catch (e) {
+    rev = null;   // undo: fetch the true state again
+    throw e;
+  } finally {
+    for (const [p] of paths) if (pending.get(p) && pending.get(p).mine === mine) pending.delete(p);
+    if (rev === null) sync(); else emit();
+  }
+}
+function newId() { return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
 export const db = {
   doc(path) {
     return {
       id: path.split("/").pop(), path,
       get: async () => { if (synced) return docSnap(path); const j = await call("get", { path }); return { id: path.split("/").pop(), exists: j.exists, data: () => j.data, metadata: meta }; },
-      set: data => change("set", { path, data }, () => cache.set(path, structuredClone(data))),
-      update: data => change("update", { path, data }, () => cache.set(path, { ...(cache.get(path) || {}), ...structuredClone(data) })),
-      delete: () => change("delete", { path }, () => { cache.delete(path); for (const p of [...cache.keys()]) if (p.startsWith(path + "/")) cache.delete(p); }),
+      set: data => change("set", { path, data }, [[path, { op: "put", data: structuredClone(data) }]]),
+      update: data => change("update", { path, data }, [[path, { op: "put", data: { ...(cache.get(path) || {}), ...structuredClone(data) } }]]),
+      delete: () => change("delete", { path }, [[path, { op: "del" }]]),
       onSnapshot: (next, err) => subscribe(() => ({ key: cache.get(path) ?? null, snap: docSnap(path) }), next, err)
     };
   },
   collection(path) {
     return {
       path,
-      add: async data => { const j = await change("add", { path, data }, r => cache.set(path + "/" + r.id, structuredClone(data))); return { id: j.id }; },
+      add: async data => { const id = newId(); await change("add", { path, id, data }, [[path + "/" + id, { op: "put", data: structuredClone(data) }]]); return { id }; },
       onSnapshot: (next, err) => subscribe(() => {
         const kids = childrenOf(path);
         const docs = kids.map(k => ({ id: k.id, exists: true, data: () => k.d, metadata: meta }));

@@ -343,3 +343,10 @@ tr.stage-row td { background: var(--surface); color: var(--pubs-ink); font-size:
 .mine-tick { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--mine-ink); flex: none; }
 .mine-icon { width: 18px; text-align: center; color: var(--meet-ink); flex: none; }
 .today-box { border-width: 2px; }
+
+/* theme switch */
+.theme-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 2px; background: var(--surface); gap: 2px; margin-right: auto; }
+.theme-switch button { border: none; background: transparent; color: var(--muted); border-radius: 999px; padding: 3px 10px; font-size: 0.8rem; }
+.theme-switch button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.theme-switch.floating { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); z-index: 30; margin: 0; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.userbar { justify-content: flex-end; }
