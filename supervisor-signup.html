@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Supervisor sign-up · PhD Supervision Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card" style="max-width:480px">
+    <div class="auth-brand">
+      <div class="label">Supervisor sign-up</div>
+      <h1>Create the supervisor account</h1>
+      <p>Done once. You need the setup key shown in the Apps Script log after running <code>init</code>.</p>
+    </div>
+    <section class="panel" id="card">
+      <form id="form" novalidate>
+        <label class="fieldlabel">Setup key<input id="key" autocomplete="off" required></label>
+        <label class="fieldlabel">Your name<input id="name" maxlength="80" required></label>
+        <label class="fieldlabel">Email (your sign-in)<input id="email" type="email" autocomplete="username" required></label>
+        <div class="row">
+          <label class="fieldlabel">Password (8+ characters)<input id="pass" type="password" autocomplete="new-password" required minlength="8"></label>
+          <label class="fieldlabel">Repeat password<input id="pass2" type="password" autocomplete="new-password" required minlength="8"></label>
+        </div>
+        <p class="err" id="err" role="alert"></p>
+        <button class="btn block" type="submit" id="btn">Create account</button>
+      </form>
+    </section>
+    <p class="auth-foot">Already set up? <a href="supervisor-login.html">Supervisor sign-in</a> · <a href="index.html">Back</a></p>
+  </div>
+</div>
+<script type="module">
+  import { configured, getStatus, setupSupervisor, authMessage, setupNotice } from "./assets/core.js";
+  const $ = id => document.getElementById(id);
+  if (!configured) setupNotice($("card"));
+  else {
+    try {
+      const st = await getStatus();
+      if (!st.setupNeeded) $("card").innerHTML = '<div class="empty"><h3>The supervisor account already exists</h3><p>Sign in on the <a href="supervisor-login.html">supervisor sign-in page</a>. To replace it, run <code>newSetupKey</code> in the Apps Script editor first.</p></div>';
+    } catch (e) { $("err").textContent = authMessage(e); }
+  }
+
+  $("form")?.addEventListener("submit", async e => {
+    e.preventDefault(); $("err").textContent = "";
+    const v = id => $(id).value.trim();
+    if (!v("key") || !v("name") || !v("email").includes("@")) { $("err").textContent = "Fill in the setup key, your name and your email."; return; }
+    if ($("pass").value.length < 8) { $("err").textContent = "Use a password of at least 8 characters."; return; }
+    if ($("pass").value !== $("pass2").value) { $("err").textContent = "The two passwords don't match."; return; }
+    $("btn").disabled = true;
+    try { await setupSupervisor(v("key"), v("email"), $("pass").value, v("name")); location.href = "dashboard.html"; }
+    catch (err) { $("err").textContent = authMessage(err); $("btn").disabled = false; }
+  });
+</script>
+</body>
+</html>

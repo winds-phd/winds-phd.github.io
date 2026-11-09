@@ -2,11 +2,14 @@
 
 - **Website:** these files, hosted free on GitHub Pages.
 - **Data:** a Google Sheet called **"PhD Supervision Log — data"** in *your* Google Drive, written by a small Google Apps Script (`google-apps-script/Code.gs`) that runs under your Google account.
-- **Logins:** one sign-in page for everyone. Students use **admission number + secret code**; you use **email + password**. Students don't need Google accounts.
+- **Logins:** separate pages for students (**admission number + secret code**) and the supervisor (**email + password**). Students don't need Google accounts.
 
 ```
-index.html          one common sign-in page (+ first-time supervisor setup)
-register.html       student registration with the class code (starts as 67890)
+index.html              start page: "I'm a student" / "I'm the supervisor"
+student-login.html      student sign-in (admission number + secret code)
+register.html           student sign-up with the class code (starts as 67890)
+supervisor-login.html   supervisor sign-in (email + password)
+supervisor-signup.html  supervisor sign-up, once, with the setup key
 dashboard.html      supervisor's working page
 student.html        a student's own working page
 assets/config.js    ← the only file you edit (paste the Apps Script URL)
@@ -41,12 +44,12 @@ google-apps-script/Code.gs   the backend that stores data in your Drive
 
 ## Part C — First sign-in
 
-1. Open your site. It shows **Create the supervisor account**.
+1. Open **https://winds-phd.github.io/supervisor-signup.html** (or the start page → "I'm the supervisor").
 2. Enter the **SETUP KEY** from Part A, your name, email and a password (8+ characters).
 3. You're on the dashboard. The **class code is 67890** (change it in the left column).
 
 ## Students
-Send them `https://winds-phd.github.io/register.html` and the class code. They register once, then sign in on the main page with **admission number + secret code**. Each student sees only their own record; the Apps Script checks this on every request.
+Send them `https://winds-phd.github.io/register.html` and the class code. They register once, then sign in at **https://winds-phd.github.io/student-login.html** with **admission number + secret code**. Each student sees only their own record; the Apps Script checks this on every request.
 
 ## Good to know
 - **Your data** is the Google Sheet in your Drive (tabs: `docs`, `users`, `sessions`). Don't edit it by hand while people are using the site. Secret codes and passwords are stored only as salted hashes.

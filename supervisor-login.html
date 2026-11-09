@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Supervisor sign-in · PhD Supervision Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="label">Supervisor sign-in</div>
+      <h1>Supervisor dashboard</h1>
+      <p>Sign in with your email and password to see every student's tasks, papers and meetings.</p>
+    </div>
+    <section class="panel" id="card">
+      <form id="form" novalidate>
+        <label class="fieldlabel">Email<input id="email" type="email" autocomplete="username" required></label>
+        <label class="fieldlabel">Password<input id="pass" type="password" autocomplete="current-password" required></label>
+        <p class="err" id="err" role="alert"></p>
+        <button class="btn block" type="submit" id="btn">Sign in</button>
+        <p class="note">Forgot your password? In the Apps Script editor run <code>newSetupKey</code>, then create the account again on the sign-up page. Student data is kept.</p>
+      </form>
+    </section>
+    <p class="auth-foot" id="foot">First time? <a href="supervisor-signup.html">Create the supervisor account</a> · <a href="index.html">Back</a></p>
+  </div>
+</div>
+<script type="module">
+  import { configured, currentUser, isSupervisor, signIn, signOut, getStatus, authMessage, setupNotice } from "./assets/core.js";
+  const $ = id => document.getElementById(id);
+  if (!configured) setupNotice($("card"));
+  else {
+    const u = await currentUser();
+    if (u) location.replace(isSupervisor(u) ? "dashboard.html" : "student.html");
+    else {
+      try { const st = await getStatus(); if (st.setupNeeded) location.replace("supervisor-signup.html"); }
+      catch (e) { $("err").textContent = authMessage(e); }
+    }
+  }
+
+  $("form")?.addEventListener("submit", async e => {
+    e.preventDefault(); $("err").textContent = "";
+    const email = $("email").value.trim(), pass = $("pass").value;
+    if (!email.includes("@") || !pass) { $("err").textContent = "Enter your email and password."; return; }
+    $("btn").disabled = true; $("btn").textContent = "Signing in…";
+    try {
+      const u = await signIn(email, pass);
+      if (!isSupervisor(u)) { await signOut(); return; }
+      location.href = "dashboard.html";
+    } catch (err) { $("err").textContent = authMessage(err); }
+    finally { $("btn").disabled = false; $("btn").textContent = "Sign in"; }
+  });
+</script>
+</body>
+</html>

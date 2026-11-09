@@ -13,7 +13,7 @@
 <div class="auth-wrap">
   <div class="auth-card" style="max-width:520px">
     <div class="auth-brand">
-      <div class="label">Student registration</div>
+      <div class="label">Student sign-up</div>
       <h1>Join your supervisor's group</h1>
       <p>You'll need the class code from your supervisor. Choose a secret code you'll remember; you'll sign in with your admission number and this secret code.</p>
     </div>
@@ -39,7 +39,7 @@
       </form>
     </section>
 
-    <p class="auth-foot">Already registered? <a href="index.html">Sign in</a></p>
+    <p class="auth-foot">Already registered? <a href="student-login.html">Student sign-in</a> · <a href="index.html">Back</a></p>
   </div>
 </div>
 
@@ -50,7 +50,7 @@
   const $ = id => document.getElementById(id);
   for (const s of STAGES) { const o = document.createElement("option"); o.value = o.textContent = s; $("stage").append(o); }
 
-  $("regForm").addEventListener("submit", async e => {
+  $("regForm")?.addEventListener("submit", async e => {
     e.preventDefault(); $("err").textContent = "";
     const v = id => $(id).value.trim();
     if (!v("code") || !v("adm") || !v("name")) { $("err").textContent = "Fill in the class code, your admission number and your name."; return; }

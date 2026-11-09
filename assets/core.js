@@ -13,7 +13,7 @@ async function call(action, payload = {}) {
   let r;
   // text/plain keeps this a "simple" request, which Apps Script accepts from another website.
   try { r = await fetch(API_URL, { method: "POST", body: JSON.stringify({ action, token, ...payload }), redirect: "follow" }); }
-  catch (e) { const err = new Error("Can't reach the server. Check your internet connection."); err.code = "network"; throw err; }
+  catch (e) { const err = new Error("Can't reach the server. Check your internet connection. If it keeps happening, the supervisor should check that the Google Apps Script is deployed with access for \"Anyone\"."); err.code = "network"; throw err; }
   let j; try { j = await r.json(); } catch (e) { const err = new Error("The server sent an unexpected reply. Check the Web app URL in assets/config.js and that it's deployed for \"Anyone\"."); err.code = "bad-reply"; throw err; }
   if (!j.ok) {
     const err = new Error(j.error || "Something went wrong."); err.code = j.code || "error";

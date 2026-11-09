@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Student sign-in · PhD Supervision Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="label">Student sign-in</div>
+      <h1>Welcome back</h1>
+      <p>Sign in with your admission number and the secret code you chose when you registered.</p>
+    </div>
+    <section class="panel" id="card">
+      <form id="form" novalidate>
+        <label class="fieldlabel">Admission number<input id="adm" autocomplete="username" required placeholder="e.g. 22DR0123"></label>
+        <label class="fieldlabel">Secret code<input id="secret" type="password" autocomplete="current-password" required></label>
+        <p class="err" id="err" role="alert"></p>
+        <button class="btn block" type="submit" id="btn">Sign in</button>
+        <p class="note">Forgot your secret code? Ask your supervisor to reset it.</p>
+      </form>
+    </section>
+    <p class="auth-foot">New student? <a href="register.html">Register with your class code</a> · <a href="index.html">Back</a></p>
+  </div>
+</div>
+<script type="module">
+  import { configured, currentUser, isSupervisor, signIn, signOut, authMessage, setupNotice } from "./assets/core.js";
+  const $ = id => document.getElementById(id);
+  if (!configured) setupNotice($("card"));
+  else { const u = await currentUser(); if (u) location.replace(isSupervisor(u) ? "dashboard.html" : "student.html"); }
+
+  $("form")?.addEventListener("submit", async e => {
+    e.preventDefault(); $("err").textContent = "";
+    const adm = $("adm").value.trim(), secret = $("secret").value;
+    if (!adm || !secret) { $("err").textContent = "Enter your admission number and secret code."; return; }
+    if (adm.includes("@")) { $("err").innerHTML = 'That looks like an email. Supervisors sign in on the <a href="supervisor-login.html">supervisor page</a>.'; return; }
+    $("btn").disabled = true; $("btn").textContent = "Signing in…";
+    try {
+      const u = await signIn(adm, secret);
+      if (isSupervisor(u)) { await signOut(); return; }
+      location.href = "student.html";
+    } catch (err) { $("err").textContent = authMessage(err); }
+    finally { $("btn").disabled = false; $("btn").textContent = "Sign in"; }
+  });
+</script>
+</body>
+</html>
