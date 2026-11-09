@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Forgot secret code · PhD Supervision Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="label" id="eyebrow">Forgot your secret code</div>
+      <h1 id="title">Reset by email</h1>
+      <p id="intro">Enter your admission number. We'll send a reset link to the email you gave when you registered. Your tasks, papers and meetings are kept.</p>
+    </div>
+    <section class="panel" id="card">
+      <form id="form" novalidate>
+        <label class="fieldlabel" id="whoLabel">Admission number<input id="who" required autocomplete="username"></label>
+        <p class="err" id="err" role="alert"></p>
+        <button class="btn block" type="submit" id="btn">Email me a reset link</button>
+      </form>
+    </section>
+    <p class="auth-foot"><a id="back" href="student-login.html">Back to sign-in</a></p>
+  </div>
+</div>
+<script type="module">
+  import { configured, requestReset, authMessage, setupNotice } from "./assets/core.js";
+  const $ = id => document.getElementById(id);
+  const sup = new URLSearchParams(location.search).get("who") === "supervisor";
+  if (sup) {
+    $("eyebrow").textContent = "Forgot your password";
+    $("intro").textContent = "Enter your supervisor email. We'll send a link to choose a new password. All student records are kept.";
+    $("whoLabel").firstChild.textContent = "Supervisor email";
+    $("who").type = "email"; $("back").href = "supervisor-login.html";
+  }
+  if (!configured) setupNotice($("card"));
+  $("form")?.addEventListener("submit", async e => {
+    e.preventDefault(); $("err").textContent = "";
+    const who = $("who").value.trim();
+    if (!who) { $("err").textContent = sup ? "Enter your email." : "Enter your admission number."; return; }
+    $("btn").disabled = true; $("btn").textContent = "Sending…";
+    try {
+      await requestReset(who);
+      $("card").innerHTML = "";
+      const box = document.createElement("div"); box.className = "empty";
+      const h = document.createElement("h3"); h.textContent = "Check your email";
+      const p1 = document.createElement("p"); p1.textContent = sup
+        ? "If that email belongs to the supervisor account, a reset link is on its way. It works once, for 60 minutes."
+        : "If that admission number is registered with an email, a reset link is on its way. It works once, for 60 minutes. Check your spam folder too.";
+      const p2 = document.createElement("p"); p2.textContent = sup
+        ? "No email after a few minutes? In the Apps Script editor, run newSetupKey and sign up again; student data is kept."
+        : "No email after a few minutes, or no email on file? Ask your supervisor to reset your secret code from their dashboard.";
+      box.append(h, p1, p2); $("card").append(box);
+    } catch (err) { $("err").textContent = authMessage(err); $("btn").disabled = false; $("btn").textContent = "Email me a reset link"; }
+  });
+</script>
+</body>
+</html>

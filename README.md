@@ -7,6 +7,8 @@
 ```
 index.html              start page: "I'm a student" / "I'm the supervisor"
 student-login.html      student sign-in (admission number + secret code)
+forgot.html             "Forgot?" — emails a reset link
+reset.html              opened from the email: choose a new secret code / password
 register.html           student sign-up with the class code (starts as 67890)
 supervisor-login.html   supervisor sign-in (email + password)
 supervisor-signup.html  supervisor sign-up, once, with the setup key
@@ -51,11 +53,15 @@ google-apps-script/Code.gs   the backend that stores data in your Drive
 ## Students
 Send them `https://winds-phd.github.io/register.html` and the class code. They register once, then sign in at **https://winds-phd.github.io/student-login.html** with **admission number + secret code**. Each student sees only their own record; the Apps Script checks this on every request.
 
+## Sections on each student's page
+Tasks (blue) · Publications (green) · Paper details: titles and links to read or cite (violet) · Conferences: shared by the whole group, anyone can add (rose) · Meetings (peach). Supervisor feedback is highlighted in yellow wherever it appears.
+
 ## Good to know
 - **Your data** is the Google Sheet in your Drive (tabs: `docs`, `users`, `sessions`). Don't edit it by hand while people are using the site. Secret codes and passwords are stored only as salted hashes.
 - **Back up:** in Google Sheets, **File → Make a copy** (or File → Download).
-- **Student forgot their secret code:** Dashboard → open the student → **Reset login code**.
-- **You forgot your password:** in the Apps Script editor run **`newSetupKey`**, read the new key in the log, and do Part C again. Data is kept.
+- **Forgot a secret code or password:** click **Forgot?** on the sign-in page. A reset link (valid 60 minutes, works once) is emailed from your Gmail to the student's recovery email, or to the supervisor's email. All records are kept. At most 3 emails per account per hour.
+- **Student has no email on file / no email arrives:** Dashboard → open the student → **Reset login code**, or add their **Recovery email** on their page.
+- **Last resort for the supervisor:** in the Apps Script editor run **`newSetupKey`**, then sign up again on `supervisor-signup.html`. Data is kept.
 - **Changed `Code.gs` later?** Deploy → **Manage deployments** → edit (pencil) → Version: **New version** → Deploy. The URL stays the same.
 - **Speed:** each save takes about 1–2 seconds and other people's changes appear within ~10 seconds. That suits a research group of a few dozen people; Google's free limits are well above that.
 - **Removing a student:** Dashboard → open the student → **Remove student** (removes their records and login).

@@ -1,6 +1,7 @@
 import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js";
 
-const STAGES = ["Coursework", "Comprehensive exam", "Research proposal", "Research work", "Open seminar / pre-submission", "Thesis submitted", "Viva voce", "Awarded"];
+const COURSES = ["PhD", "Masters", "B-Tech"];
+function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
 const STATUSES = ["Not started", "In progress", "Under review", "Blocked", "Done"];
 const STATUS_CLASS = { "Not started": "plain", "In progress": "", "Under review": "warn", "Blocked": "bad", "Done": "good" };
 const PSTATUS = ["Idea", "Drafting", "Internal review", "Submitted", "Under review", "Major revision", "Minor revision", "Accepted", "Published", "Rejected"];
@@ -9,7 +10,7 @@ const PTYPES = ["Journal article", "Conference paper", "Review article", "Book c
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
-const S = { isOwner: false, papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "open" };
+const S = { isOwner: false, myRole: "student", confs: [], refs: [], papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag); let val;
@@ -98,7 +99,7 @@ function renderRoster() {
     const l = lastMeeting(s.id), mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), od = open.filter(isOverdue).length;
     items.push(h("button", { class: "r-item", type: "button", "aria-current": S.sel === s.id ? "true" : "false", onclick: () => select(s.id) },
       h("span", { class: "nm", text: s.name }),
-      h("span", { class: "meta", text: (s.admissionNo ? s.admissionNo + " · " : "") + (s.stage || "Stage not set") }),
+      h("span", { class: "meta", text: (s.admissionNo ? s.admissionNo + " · " : "") + courseOf(s) }),
       h("span", { class: "meta" },
         h("span", { text: l ? "Met " + (diff(l, todayStr()) === 0 ? "today" : diff(l, todayStr()) + "d ago") : "No meetings yet" }),
         h("span", { text: open.length + " open · " + (mine.length - open.length) + " done" }),
@@ -119,7 +120,7 @@ function renderOverview() {
     return;
   }
   const open = tasksOf().filter(t => !isDone(t)).sort(sortTasks);
-  const openPanel = h("section", { class: "panel" },
+  const openPanel = h("section", { class: "panel sec-tasks" },
     h("div", { class: "panel-head" }, h("h3", { text: "Open tasks across the group" }), h("span", { class: "muted", text: open.length + " open" })),
     open.length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Student", "Task", "Status", "Progress", "Assigned", "Days so far", "Due"].map(x => h("th", { text: x })))),
@@ -129,7 +130,7 @@ function renderOverview() {
         h("td", { class: "num", text: fmtD(startOf(t)) }), h("td", { class: "num", text: m.elapsed }), h("td", null, timingChip(t))); }))))
       : h("p", { class: "note", text: "No open tasks." }));
   const done = tasksOf().filter(t => isDone(t)).sort((a, b) => (b.doneAt || "").localeCompare(a.doneAt || "")).slice(0, 12);
-  const donePanel = h("section", { class: "panel" },
+  const donePanel = h("section", { class: "panel sec-tasks" },
     h("div", { class: "panel-head" }, h("h3", { text: "Recently completed" }), h("span", { class: "muted", text: avgDays(tasksOf()) == null ? "" : "Average " + plural(avgDays(tasksOf()), "day") + " to finish" })),
     done.length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Student", "Task", "Assigned", "Finished", "Days taken", "Against due date"].map(x => h("th", { text: x })))),
@@ -139,14 +140,14 @@ function renderOverview() {
         h("td", { class: "num", text: m.taken }), h("td", null, timingChip(t))); }))))
       : h("p", { class: "note", text: "Completed tasks will appear here with the number of days each one took." }));
   const recent = [...S.meetings].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 6);
-  const meetPanel = h("section", { class: "panel" },
+  const meetPanel = h("section", { class: "panel sec-meet" },
     h("div", { class: "panel-head" }, h("h3", { text: "Recent meetings" })),
     recent.length ? h("ul", { class: "meetings" }, recent.map(m => h("li", { class: "meeting" },
       h("div", { class: "m-top" }, h("button", { class: "linkish", type: "button", text: studentName(m.studentId), onclick: () => select(m.studentId) }), h("span", { class: "m-date", text: fmtD(m.date) })),
       h("p", { class: "note", text: plural((m.updates || []).length, "task update") + " · " + plural((m.newTasks || []).length, "new task") + (m.notes ? " · " + (m.notes.length > 140 ? m.notes.slice(0, 140) + "…" : m.notes) : "") }))))
       : h("p", { class: "note", text: "No meetings logged yet. Pick a student on the left to log one." }));
   const pp = [...S.papers].sort((a, b) => (pActive(b) - pActive(a)) || PSTATUS.indexOf(pStatus(b)) - PSTATUS.indexOf(pStatus(a)));
-  const papPanel = h("section", { class: "panel" },
+  const papPanel = h("section", { class: "panel sec-pubs" },
     h("div", { class: "panel-head" }, h("h3", { text: "Publications pipeline" }), h("span", { class: "muted", text: S.papers.filter(p => pStatus(p) === "Published").length + " published · " + S.papers.filter(inReview).length + " in review" })),
     pp.length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Student", "Paper", "Venue", "Indexing", "Status", "Review time", "Draft"].map(x => h("th", { text: x })))),
@@ -157,7 +158,8 @@ function renderOverview() {
         h("td", null, pChip(pStatus(p))), h("td", { class: "num", text: m.review == null ? "—" : m.review + "d" }),
         h("td", null, p.overleaf ? h("a", { class: "ext", href: p.overleaf, target: "_blank", rel: "noopener", text: "Overleaf ↗" }) : h("span", { class: "muted", text: "—" }))); }))))
       : h("p", { class: "note", text: "Papers added on a student's Publications tab appear here with their status and review time." }));
-  d.replaceChildren(openPanel, papPanel, donePanel, meetPanel);
+  d.replaceChildren(openPanel, confPanelEl(), papPanel, donePanel, meetPanel);
+  refreshConfs();
 }
 
 /* ---------- publications ---------- */
@@ -205,7 +207,8 @@ function paperCard(p) {
           p.quartile && p.quartile !== "—" ? h("span", { class: "chip", text: p.quartile }) : null,
           p.venue ? h("span", { class: "p-venue", text: p.venue }) : null,
           p.overleaf ? h("span", { class: "chip plain", text: "Overleaf linked" }) : null),
-        sm.oneLine ? h("div", { class: "t-sub", text: sm.oneLine }) : null),
+        sm.oneLine ? h("div", { class: "t-sub", text: sm.oneLine }) : null,
+        latestFeedback(p)),
       h("div", { class: "t-right" },
         h("span", { class: "days" + (inReview(p) && m.review > 180 ? " bad" : p.acceptedOn ? " good" : ""), text: m.reviewLabel }),
         h("span", { class: "who", text: plural(m.inStatus, "day") + " in current status" }))));
@@ -224,7 +227,7 @@ function paperCard(p) {
      ["Submitted", fmtD(p.submittedOn)], ["First decision", p.firstDecisionOn ? fmtD(p.firstDecisionOn) + (m.firstDecision != null ? " (" + m.firstDecision + "d)" : "") : "—"],
      ["Accepted", fmtD(p.acceptedOn)], ["Published", fmtD(p.publishedOn)], ["Review time", m.review == null ? "—" : plural(m.review, "day")], ["Status updates", String((p.history || []).length)]]
       .map(([k, v]) => h("div", null, h("dt", { text: k }), h("dd", { text: v }))));
-  const hist = (p.history || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const hist = (p.history || []).map((x, i) => [x, i]).sort((a, b) => (b[0].date || "").localeCompare(a[0].date || "") || b[1] - a[1]).map(p => p[0]);
   const body = h("div", { class: "t-body" },
     h("div", { class: "linkbtns" },
       p.overleaf ? h("a", { class: "btn small", href: p.overleaf, target: "_blank", rel: "noopener", text: "Open working draft in Overleaf ↗" })
@@ -240,7 +243,7 @@ function paperCard(p) {
       hist.length ? h("ol", { class: "hist" }, hist.map(x => h("li", null,
         h("div", { class: "h-top" }, h("span", { class: "h-date", text: fmtD(x.date) }), pChip(x.status || "Idea"),
           h("span", { class: "who", text: x.via === "meeting" ? "Meeting update" : x.via === "added" ? "Added" : "Direct update" }), h("span", { class: "who", text: x.byName ? "by " + x.byName : "" })),
-        x.remark ? h("p", { text: x.remark }) : null))) : h("p", { class: "note", text: "No status changes yet." })),
+        remarkEl(x)))) : h("p", { class: "note", text: "No status changes yet." })),
     S.canWrite ? paperStatusForm(p) : null,
     S.canWrite ? h("details", { class: "sub" }, h("summary", { text: "Edit paper details and summary" }), paperEditForm(p)) : null);
   card.append(body);
@@ -253,12 +256,12 @@ function paperStatusForm(p) {
       e.preventDefault();
       const status = sel.value, date = val("psd-" + id) || todayStr(), remark = val("psr-" + id).trim();
       if (status === pStatus(p) && !remark) { say("Change the status or add a remark."); return; }
-      const patch = { status, statusSince: date, ...(status !== pStatus(p) ? stampDates(p, status, date) : {}), history: [...(p.history || []), { date, status, remark, via: "edit", by: S.uid, byName: S.myName }] };
+      const patch = { status, statusSince: date, ...(status !== pStatus(p) ? stampDates(p, status, date) : {}), history: [...(p.history || []), { date, status, remark, via: "edit", by: S.uid, byName: S.myName, byRole: S.myRole }] };
       await write(db => db.doc(P("papers", p)).update(patch), "Paper updated");
     } },
     h("h4", { text: "Update status" }),
     h("div", { class: "row" }, h("label", { class: "fieldlabel" }, "New status", sel), h("label", { class: "fieldlabel" }, "As of", h("input", { type: "date", id: "psd-" + id, value: todayStr() }))),
-    h("label", { class: "fieldlabel" }, "Remark", h("input", { id: "psr-" + id, maxlength: "500", placeholder: "e.g. Reviewer 2 asked for comparison with baseline X" })),
+    h("label", { class: "fieldlabel" }, S.isOwner ? "Supervisor feedback (highlighted for the student)" : "Remark", h("input", { id: "psr-" + id, maxlength: "500", placeholder: "e.g. Reviewer 2 asked for comparison with baseline X" })),
     h("div", null, h("button", { class: "btn", type: "submit", text: "Save status" })));
 }
 function paperFields(prefix, p) {
@@ -314,8 +317,8 @@ function paperAddForm(s) {
   return h("form", { class: "edit-box", hidden: !S.canWrite, onsubmit: async e => {
       e.preventDefault(); const d = readPaperFields(prefix); if (!d.title) { say("The paper needs a title."); return; }
       const status = sel.value, date = val("np-date") || todayStr();
-      const base = { ...d, studentId: s.id, status, statusSince: date, createdAt: Date.now(), createdBy: S.uid, byName: S.myName,
-        history: [{ date, status, remark: "Paper added", via: "added", by: S.uid, byName: S.myName }] };
+      const base = { ...d, studentId: s.id, status, statusSince: date, createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole,
+        history: [{ date, status, remark: "Paper added", via: "added", by: S.uid, byName: S.myName, byRole: S.myRole }] };
       Object.assign(base, stampDates({}, status, date));
           const ok = await write(db => db.collection(C("papers", s.id)).add(base), "Paper added");
       if (ok) { e.target.reset(); document.getElementById("np-date").value = todayStr(); sel.value = "Drafting"; e.target.closest("details").open = false; }
@@ -328,9 +331,9 @@ function paperAddForm(s) {
 /* ---------- student page ---------- */
 function buildStudent(s) {
   const d = document.getElementById("detail");
-  const stageSel = h("select", { id: "stage-" + s.id, "aria-label": "Stage", disabled: !S.canWrite, onchange: e => write(db => db.doc("students/" + s.id).update({ stage: e.target.value }), "Stage updated") },
-    STAGES.map(x => h("option", { value: x, text: x })));
-  stageSel.value = s.stage || STAGES[0];
+  const stageSel = h("select", { id: "course-" + s.id, "aria-label": "Course", disabled: !S.canWrite, onchange: e => write(db => db.doc("students/" + s.id).update({ course: e.target.value }), "Course updated") },
+    COURSES.map(x => h("option", { value: x, text: x })));
+  stageSel.value = courseOf(s);
   const rm = h("button", { class: "btn danger small", type: "button", text: "Remove student", hidden: !S.isOwner });
   let armed = null;
   rm.onclick = async () => {
@@ -347,11 +350,11 @@ function buildStudent(s) {
   const head = h("section", { class: "panel" },
     h("div", { class: "s-head" },
       h("div", { style: "min-width:0" },
-        h("div", { class: "label", text: [s.admissionNo ? "Adm. no. " + s.admissionNo : "", s.year ? "Admitted " + s.year : ""].filter(Boolean).join(" · ") || "PhD scholar" }),
+        h("div", { class: "label", text: [s.admissionNo ? "Adm. no. " + s.admissionNo : "", s.year ? "Admitted " + s.year : ""].filter(Boolean).join(" · ") || "Student" }),
         h("h2", { id: "s-name", text: s.name }),
-        s.topic ? h("p", { class: "topic", text: s.topic }) : null),
-      h("div", { class: "s-controls" }, h("label", { class: "fieldlabel" }, "Current stage", stageSel), S.isOwner ? resetBox(s) : null, rm)),
-    h("div", { class: "stagebar", id: "stagebar" }),
+        s.topic ? h("p", { class: "topic", text: s.topic }) : null,
+        S.canWrite ? emailRow(s) : null),
+      h("div", { class: "s-controls" }, h("label", { class: "fieldlabel" }, "Course", stageSel), S.isOwner ? resetBox(s) : null, rm)),
     h("div", { class: "s-figs", id: "s-figs" }));
 
   /* new task */
@@ -359,8 +362,8 @@ function buildStudent(s) {
       e.preventDefault(); const title = val("nt-title").trim(); if (!title) return;
       const assigned = val("nt-assigned") || todayStr();
       const ok = await write(db => db.collection(C("tasks", s.id)).add({ studentId: s.id, title, details: val("nt-details").trim(), owner: val("nt-owner"), assigned, due: val("nt-due"),
-        status: "Not started", progress: 0, doneAt: "", createdAt: Date.now(), createdBy: S.uid, byName: S.myName,
-        history: [{ date: assigned, status: "Not started", progress: 0, remark: "Task assigned", via: "assigned", by: S.uid, byName: S.myName }] }), "Task added");
+        status: "Not started", progress: 0, doneAt: "", createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole,
+        history: [{ date: assigned, status: "Not started", progress: 0, remark: "Task assigned", via: "assigned", by: S.uid, byName: S.myName, byRole: S.myRole }] }), "Task added");
       if (ok) { ["nt-title", "nt-details", "nt-due"].forEach(id => document.getElementById(id).value = ""); document.getElementById("nt-assigned").value = todayStr(); }
     } },
     h("h4", { text: "Add a task" }),
@@ -371,7 +374,7 @@ function buildStudent(s) {
       h("label", { class: "fieldlabel" }, "Due by", h("input", { id: "nt-due", type: "date" })),
       h("label", { class: "fieldlabel" }, "Responsible", h("select", { id: "nt-owner" }, h("option", { value: "student", text: "Student" }), h("option", { value: "supervisor", text: "Supervisor" })))),
     h("div", null, h("button", { class: "btn", type: "submit", text: "Add task" })));
-  const filters = h("div", { class: "filters", id: "task-filters" }, [["open", "Open"], ["done", "Completed"], ["all", "All"]].map(([k, l]) =>
+  const filters = h("div", { class: "filters", id: "task-filters" }, [["all", "All"], ["open", "Open"], ["done", "Completed"]].map(([k, l]) =>
     h("button", { type: "button", "data-f": k, "aria-pressed": S.filter === k ? "true" : "false", text: l, onclick: () => { S.filter = k; refreshStudent(s); } })));
   const tasks = h("section", { class: "panel" },
     h("div", { class: "panel-head" }, h("h3", { text: "Task register" }), filters),
@@ -403,16 +406,48 @@ function buildStudent(s) {
     h("div", { class: "tasks", id: "paper-list" }),
     S.canWrite ? h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper" }), h("div", { style: "margin-top:10px" }, paperAddForm(s))) : null);
 
+  const refForm = h("form", { class: "edit-box", hidden: !S.canWrite, onsubmit: async e => {
+      e.preventDefault(); const title = val("nr-title").trim(); let link = val("nr-link").trim();
+      if (!title) { say("Add the paper's title."); return; }
+      if (link && !/^https?:\/\//i.test(link)) link = /^10\.\d{4,}\//.test(link) ? "https://doi.org/" + link : "https://" + link;
+      const ok = await write(db => db.collection(C("refs", s.id)).add({ studentId: s.id, title, link, note: val("nr-note").trim(), added: todayStr(), createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole }), "Paper added to the list");
+      if (ok) { ["nr-title", "nr-link", "nr-note"].forEach(id => document.getElementById(id).value = ""); }
+    } },
+    h("h4", { text: "Add a paper" }),
+    h("label", { class: "fieldlabel" }, "Title", h("input", { id: "nr-title", maxlength: "400", placeholder: "e.g. Attention Is All You Need" })),
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "Link (URL or DOI)", h("input", { id: "nr-link", maxlength: "500", placeholder: "https://… or 10.xxxx/…" })),
+      h("label", { class: "fieldlabel" }, "Note (optional)", h("input", { id: "nr-note", maxlength: "300", placeholder: "Why it matters, which chapter" }))),
+    h("div", null, h("button", { class: "btn", type: "submit", text: "Add paper" })));
+  const refsPanel = h("section", { class: "panel sec-refs" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Paper details" }), h("span", { class: "muted", id: "ref-count" })),
+    h("p", { class: "note", text: "Papers to read or cite, with their links. The supervisor and the student can both add to this list." }),
+    h("ul", { class: "refs", id: "ref-list" }), refForm);
+
+  tasks.classList.add("sec-tasks"); papersPanel.classList.add("sec-pubs"); meetPanel.classList.add("sec-meet"); logPanel.classList.add("sec-meet");
   const panes = {
     tasks: h("div", { class: "tabpane", "data-pane": "tasks" }, tasks),
+    refs: h("div", { class: "tabpane", "data-pane": "refs" }, refsPanel),
+    confs: h("div", { class: "tabpane", "data-pane": "confs" }, confPanelEl()),
     papers: h("div", { class: "tabpane", "data-pane": "papers" }, papersPanel),
     meetings: h("div", { class: "tabpane", "data-pane": "meetings" }, h("div", { class: "cols" }, meetPanel, logPanel)) };
-  const tabBtn = (k, l) => h("button", { type: "button", role: "tab", "data-tab": k, "aria-selected": S.tab === k ? "true" : "false",
+  const tabBtn = (k, l) => h("button", { type: "button", role: "tab", "data-tab": k, class: "tab-" + k, "aria-selected": S.tab === k ? "true" : "false",
     onclick: () => { S.tab = k; showTab(); } }, l, h("span", { class: "n", id: "tabn-" + k }));
-  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("meetings", "Meetings"));
-  d.replaceChildren(head, tabs, panes.tasks, panes.papers, panes.meetings);
+  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Paper details"), tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"));
+  d.replaceChildren(head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings);
   showTab();
   updSig = null; pupdSig = null;
+}
+/** Recovery email, used for "Forgot your secret code?" links. Editable by the student and the supervisor. */
+function emailRow(s) {
+  const input = h("input", { id: "em-" + s.id, type: "email", maxlength: "120", value: s.email || "", placeholder: "name@example.com", "aria-label": "Recovery email", style: "max-width:280px" });
+  const warn = h("span", { class: "chip warn", hidden: !!s.email, text: "Add an email so the secret code can be reset" });
+  const form = h("form", { class: "email-row", onsubmit: async e => {
+      e.preventDefault(); const v = input.value.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { say("Enter a valid email address."); return; }
+      if (await write(db => db.doc("students/" + s.id).update({ email: v }), "Recovery email saved")) warn.hidden = true;
+    } }, h("span", { class: "label", text: "Recovery email" }), input, h("button", { class: "btn ghost small", type: "submit", text: "Save" }), warn);
+  return form;
 }
 function resetBox(s) {
   const input = h("input", { id: "rs-" + s.id, type: "text", minlength: "6", maxlength: "64", placeholder: "New secret code", autocomplete: "off", "aria-label": "New secret code for " + s.name });
@@ -437,18 +472,19 @@ function taskCard(t) {
         h("b", { text: m.done ? m.taken : m.elapsed }), h("span", { text: m.done ? "days taken" : "days so far" })),
       h("div", { style: "min-width:0" },
         h("div", { class: "t-title", text: t.title }),
-        h("div", { class: "t-sub" }, statusChip(st), ownerChip(t), h("span", { text: "Assigned " + fmtD(startOf(t)) }), h("span", { text: "Due " + fmtD(t.due) }), timingChip(t))),
-      h("div", { class: "t-right" }, progBar(isDone(t) ? 100 : t.progress), h("span", { class: "days " + m.cls, text: m.label }))));
+        h("div", { class: "t-sub" }, statusChip(st), ownerChip(t), h("span", { text: "Assigned " + fmtD(startOf(t)) }), h("span", { text: "Due " + fmtD(t.due) }), timingChip(t)),
+        latestFeedback(t)),
+      h("div", { class: "t-right" }, progBar(isDone(t) ? 100 : t.progress), h("span", { class: "days " + m.cls, text: m.label }), quickToggle(t))));
   const facts = h("dl", { class: "facts" },
     [["Status", st], ["Progress", (isDone(t) ? 100 : (t.progress || 0)) + "%"], ["Assigned", fmtD(startOf(t))], ["Due", fmtD(t.due)],
      ["Completed", isDone(t) ? fmtD(t.doneAt) : "Not yet"], [m.done ? "Days taken" : "Days elapsed", String(m.done ? m.taken : m.elapsed)],
      ["Against due date", m.timing], ["Updates logged", String((t.history || []).length)]].map(([k, v]) => h("div", null, h("dt", { text: k }), h("dd", { text: v }))));
-  const hist = (t.history || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const hist = (t.history || []).map((x, i) => [x, i]).sort((a, b) => (b[0].date || "").localeCompare(a[0].date || "") || b[1] - a[1]).map(p => p[0]);
   const histEl = hist.length ? h("ol", { class: "hist" }, hist.map(x => h("li", null,
       h("div", { class: "h-top" }, h("span", { class: "h-date", text: fmtD(x.date) }), statusChip(x.status || "Not started"), h("span", { class: "mono", text: (x.progress || 0) + "%" }),
         h("span", { class: "who", text: x.via === "meeting" ? "Meeting update" : x.via === "assigned" ? "Assigned" : "Direct update" }),
         h("span", { class: "who", text: x.byName ? "by " + x.byName : "" })),
-      x.remark ? h("p", { text: x.remark }) : null)))
+      remarkEl(x))))
     : h("p", { class: "note", text: "No updates yet." });
   const body = h("div", { class: "t-body" }, facts,
     t.details ? h("div", null, h("div", { class: "label", text: "Details" }), h("p", { class: "t-details", text: t.details })) : null,
@@ -456,6 +492,27 @@ function taskCard(t) {
     S.canWrite ? editForm(t) : null);
   card.append(body);
   return card;
+}
+/** One-click Done / Not done. Students can mark a task done; only the supervisor can mark a finished task as not done. */
+function quickToggle(t) {
+  if (!S.canWrite) return null;
+  if (isDone(t) && !S.isOwner) return null;
+  const btn = h("button", { type: "button", class: "btn small " + (isDone(t) ? "danger" : "ghost"), text: isDone(t) ? "Mark as not done" : "Mark as done" });
+  btn.onclick = async e => {
+    e.preventDefault(); e.stopPropagation();   // don't open/close the card
+    const date = todayStr();
+    if (isDone(t)) {
+      // back to where it was before it was marked done
+      const before = (t.history || []).filter(x => x.status && x.status !== "Done").pop();
+      const progress = before && before.progress < 100 ? before.progress : 90;
+      await write(db => db.doc(P("tasks", t)).update({ status: "In progress", progress, doneAt: "",
+        history: [...(t.history || []), { date, status: "In progress", progress, remark: "Marked as not done by supervisor", via: "edit", by: S.uid, byName: S.myName, byRole: S.myRole }] }), "Task reopened: marked as not done");
+    } else {
+      await write(db => db.doc(P("tasks", t)).update({ status: "Done", progress: 100, doneAt: date,
+        history: [...(t.history || []), { date, status: "Done", progress: 100, remark: "Marked as done", via: "edit", by: S.uid, byName: S.myName, byRole: S.myRole }] }), "Task marked as done");
+    }
+  };
+  return btn;
 }
 function editForm(t) {
   const id = t.id, st = statusOf(t);
@@ -473,7 +530,7 @@ function editForm(t) {
       e.preventDefault();
       const status = sel.value, progress = status === "Done" ? 100 : Number(range.value), date = val("ed-" + id) || todayStr(), remark = val("er-" + id).trim();
       const due = val("eu-" + id), details = val("et-" + id).trim();
-      const entry = { date, status, progress, remark, via: "edit", by: S.uid, byName: S.myName };
+      const entry = { date, status, progress, remark, via: "edit", by: S.uid, byName: S.myName, byRole: S.myRole };
       const changedProgress = status !== st || progress !== (t.progress || 0) || remark;
       const patch = { status, progress, due, details, doneAt: status === "Done" ? (isDone(t) && t.doneAt ? t.doneAt : date) : "" };
       if (changedProgress) patch.history = [...(t.history || []), entry];
@@ -484,7 +541,7 @@ function editForm(t) {
       h("label", { class: "fieldlabel" }, "Status", sel),
       h("label", { class: "fieldlabel" }, "Progress", h("div", { class: "u-prog", style: "display:flex;gap:8px;align-items:center" }, range, out)),
       h("label", { class: "fieldlabel" }, "As of", h("input", { type: "date", id: "ed-" + id, value: todayStr() }))),
-    h("label", { class: "fieldlabel" }, "Remark", h("input", { id: "er-" + id, maxlength: "500", placeholder: "What was done, what's pending" })),
+    h("label", { class: "fieldlabel" }, S.isOwner ? "Supervisor feedback (highlighted for the student)" : "Remark", h("input", { id: "er-" + id, maxlength: "500", placeholder: "What was done, what's pending" })),
     h("div", { class: "row" },
       h("label", { class: "fieldlabel" }, "Due date", h("input", { type: "date", id: "eu-" + id, value: t.due || "" })),
       h("label", { class: "fieldlabel" }, "Details", h("input", { id: "et-" + id, value: t.details || "", maxlength: "2000" }))),
@@ -562,20 +619,20 @@ async function submitMeeting(s, f) {
     const newTasks = [];
     for (const a of actions) {
       const ref = await db.collection(C("tasks", s.id)).add({ studentId: s.id, title: a, details: "", owner: "student", assigned: date, due, status: "Not started", progress: 0, doneAt: "",
-        createdAt: Date.now(), createdBy: S.uid, byName: S.myName, fromMeeting: date, history: [{ date, status: "Not started", progress: 0, remark: "Assigned in meeting", via: "assigned", by: S.uid, byName: S.myName }] });
+        createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole, fromMeeting: date, history: [{ date, status: "Not started", progress: 0, remark: "Assigned in meeting", via: "assigned", by: S.uid, byName: S.myName, byRole: S.myRole }] });
       newTasks.push({ taskId: ref.id, title: a, due });
     }
     for (const u of updates) {
       const t = u.t;
       await db.doc(P("tasks", t)).update({ status: u.status, progress: u.progress, doneAt: u.status === "Done" ? date : "",
-        history: [...(t.history || []), { date, status: u.status, progress: u.progress, remark: u.remark, via: "meeting", by: S.uid, byName: S.myName }] });
+        history: [...(t.history || []), { date, status: u.status, progress: u.progress, remark: u.remark, via: "meeting", by: S.uid, byName: S.myName, byRole: S.myRole }] });
     }
     for (const u of pupdates) {
       const p = u.p;
       await db.doc(P("papers", p)).update({ status: u.status, ...(u.status !== u.prevStatus ? { statusSince: date, ...stampDates(p, u.status, date) } : {}),
-        history: [...(p.history || []), { date, status: u.status, remark: u.remark, via: "meeting", by: S.uid, byName: S.myName }] });
+        history: [...(p.history || []), { date, status: u.status, remark: u.remark, via: "meeting", by: S.uid, byName: S.myName, byRole: S.myRole }] });
     }
-    await db.collection(C("meetings", s.id)).add({ studentId: s.id, date, next, notes, createdAt: Date.now(), createdBy: S.uid, byName: S.myName,
+    await db.collection(C("meetings", s.id)).add({ studentId: s.id, date, next, notes, createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole,
       updates: updates.map(({ t, ...u }) => u), paperUpdates: pupdates.map(({ p, ...u }) => u), newTasks });
   }, "Meeting saved: " + plural(updates.length, "task update") + ", " + plural(pupdates.length, "paper update") + ", " + plural(actions.length, "new task"));
   if (ok) {
@@ -593,7 +650,7 @@ function meetingItem(m) {
       h("span", { style: "display:flex;gap:6px;align-items:center;flex-wrap:wrap" }, m.next ? h("span", { class: "chip plain", text: "Next: " + fmtD(m.next) }) : null,
         h("span", { class: "who", text: m.byName ? "by " + m.byName : "" }),
         S.canWrite ? h("button", { class: "x", type: "button", text: "Delete", "aria-label": "Delete meeting record", onclick: () => write(db => db.doc(P("meetings", m)).delete(), "Meeting record deleted") }) : null)),
-    m.notes ? h("p", { class: "notes", text: m.notes }) : null,
+    m.notes ? (bySup(m) ? h("div", { class: "fb" }, h("span", { class: "fb-tag", text: "Supervisor feedback" }), h("p", { class: "notes", text: m.notes })) : h("p", { class: "notes", text: m.notes })) : null,
     ups.length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Task", "Day", "Status", "Progress", "Remark"].map(x => h("th", { text: x })))),
       h("tbody", null, ups.map(u => h("tr", null,
@@ -601,24 +658,91 @@ function meetingItem(m) {
         h("td", { class: "num", text: u.day != null ? String(u.day) : "—" }),
         h("td", null, u.prevStatus !== u.status ? [statusChip(u.prevStatus), h("span", { class: "arrow", text: "→" })] : null, statusChip(u.status)),
         h("td", { class: "num", text: (u.prevProgress !== u.progress ? u.prevProgress + "% → " : "") + u.progress + "%" }),
-        h("td", { text: u.remark || "—" })))))) : null,
+        h("td", { class: bySup(m) && u.remark ? "fb-cell" : "", text: u.remark || "—" })))))) : null,
     (m.paperUpdates || []).length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Paper", "Status", "Remark"].map(x => h("th", { text: x })))),
       h("tbody", null, m.paperUpdates.map(u => h("tr", null,
         h("td", null, S.papers.some(p => p.id === u.paperId) ? h("button", { class: "linkish", type: "button", text: u.title, onclick: () => focusPaper(u.paperId) }) : h("span", { text: u.title })),
         h("td", null, u.prevStatus !== u.status ? [pChip(u.prevStatus), h("span", { class: "arrow", text: "→" })] : null, pChip(u.status)),
-        h("td", { text: u.remark || "—" })))))) : null,
+        h("td", { class: bySup(m) && u.remark ? "fb-cell" : "", text: u.remark || "—" })))))) : null,
     nts.length ? h("div", null, h("div", { class: "label", text: "New tasks assigned" }),
       h("ul", { style: "margin:4px 0 0;padding-left:18px" }, nts.map(n => h("li", null, n.title, n.due ? h("span", { class: "who", text: " · due " + fmtD(n.due) }) : null)))) : null);
+}
+/* ---------- upcoming conferences (shared by the whole group) ---------- */
+let confPanel = null;
+function confPanelEl() {
+  if (confPanel) return confPanel;
+  const form = h("form", { class: "edit-box", onsubmit: async e => {
+      e.preventDefault();
+      const name = val("nc-name").trim(); let url = val("nc-url").trim(); const deadline = val("nc-deadline");
+      if (!name || !deadline) { say("Add the conference name and its deadline."); return; }
+      if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
+      const ok = await write(db => db.collection("conferences").add({ name, url, deadline, note: val("nc-note").trim(), createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole }), "Conference added for everyone");
+      if (ok) ["nc-name", "nc-url", "nc-deadline", "nc-note"].forEach(id => document.getElementById(id).value = "");
+    } },
+    h("h4", { text: "Add a conference" }),
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "Conference name", h("input", { id: "nc-name", maxlength: "200", placeholder: "e.g. IEEE ICASSP 2027" })),
+      h("label", { class: "fieldlabel" }, "Submission deadline", h("input", { id: "nc-deadline", type: "date" }))),
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "Website (URL)", h("input", { id: "nc-url", maxlength: "500", placeholder: "https://…" })),
+      h("label", { class: "fieldlabel" }, "Note (optional)", h("input", { id: "nc-note", maxlength: "300", placeholder: "Location, dates, who plans to submit" }))),
+    h("div", null, h("button", { class: "btn", type: "submit", text: "Add conference" })));
+  confPanel = h("section", { class: "panel sec-conf" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Upcoming conferences" }), h("span", { class: "muted", id: "conf-count" })),
+    h("p", { class: "note", text: "Shared with everyone in the group. Anyone can add a conference; you can remove the ones you added." }),
+    h("ul", { class: "refs", id: "conf-list" }), form);
+  return confPanel;
+}
+function confItem(c) {
+  const left = c.deadline ? diff(todayStr(), c.deadline) : null;
+  const chip = left == null ? h("span", { class: "chip plain", text: "No deadline" })
+    : left < 0 ? h("span", { class: "chip plain", text: "Deadline passed" })
+    : h("span", { class: "chip " + (left <= 7 ? "bad" : left <= 30 ? "warn" : "good"), text: left === 0 ? "Due today" : plural(left, "day") + " left" });
+  let host = ""; try { host = c.url ? new URL(c.url).hostname.replace(/^www\./, "") : ""; } catch (e) { host = ""; }
+  const canDelete = S.isOwner || c.createdBy === S.uid;
+  let armed = null;
+  const del = canDelete ? h("button", { class: "x", type: "button", text: "Remove" }) : null;
+  if (del) del.onclick = () => { if (!armed) { del.textContent = "Confirm remove"; armed = setTimeout(() => { armed = null; del.textContent = "Remove"; }, 4000); return; } clearTimeout(armed); write(db => db.doc("conferences/" + c.id).delete(), "Conference removed"); };
+  return h("li", { class: "ref conf" + (left != null && left < 0 ? " past" : "") },
+    h("div", { class: "conf-date" }, h("b", { text: c.deadline ? parseD(c.deadline).getDate() : "—" }), h("span", { text: c.deadline ? parseD(c.deadline).toLocaleDateString("en-IN", { month: "short", year: "numeric" }) : "" })),
+    h("div", { style: "min-width:0;flex:1" },
+      c.url ? h("a", { class: "ref-title", href: c.url, target: "_blank", rel: "noopener", text: c.name }) : h("span", { class: "ref-title", text: c.name }),
+      h("div", { class: "t-sub" }, chip, host ? h("span", { class: "mono", text: host }) : null, h("span", { class: "who", text: c.byName ? "added by " + c.byName : "" })),
+      c.note ? h("p", { class: "ref-note", text: c.note }) : null),
+    del);
+}
+function refreshConfs() {
+  const list = document.getElementById("conf-list"); if (!list) return;
+  const all = [...(S.confs || [])];
+  const up = all.filter(c => !c.deadline || diff(todayStr(), c.deadline) >= 0).sort((a, b) => (a.deadline || "9999").localeCompare(b.deadline || "9999"));
+  const past = all.filter(c => c.deadline && diff(todayStr(), c.deadline) < 0).sort((a, b) => b.deadline.localeCompare(a.deadline));
+  document.getElementById("conf-count").textContent = up.length + " upcoming" + (past.length ? " · " + past.length + " past" : "");
+  list.replaceChildren(...(up.length ? up.map(confItem) : [h("li", null, h("p", { class: "note", text: "No upcoming conferences yet. Add one below." }))]),
+    ...(past.length ? [h("li", null, h("details", { class: "sub" }, h("summary", { text: plural(past.length, "past conference") }), h("ul", { class: "refs", style: "margin-top:8px" }, past.map(confItem))))] : []));
+  const n = document.getElementById("tabn-confs"); if (n) n.textContent = up.length;
+}
+
+function refItem(r) {
+  let host = ""; try { host = r.link ? new URL(r.link).hostname.replace(/^www\./, "") : ""; } catch (e) { host = ""; }
+  const canDelete = S.isOwner || r.createdBy === S.uid;
+  let armed = null;
+  const del = canDelete ? h("button", { class: "x", type: "button", text: "Remove" }) : null;
+  if (del) del.onclick = () => { if (!armed) { del.textContent = "Confirm remove"; armed = setTimeout(() => { armed = null; del.textContent = "Remove"; }, 4000); return; } clearTimeout(armed); write(db => db.doc(P("refs", r)).delete(), "Removed from the list"); };
+  return h("li", { class: "ref" + (bySup(r) ? " ref-sup" : "") },
+    h("div", { style: "min-width:0" },
+      r.link ? h("a", { class: "ref-title", href: r.link, target: "_blank", rel: "noopener", text: r.title }) : h("span", { class: "ref-title", text: r.title }),
+      h("div", { class: "t-sub" }, host ? h("span", { class: "mono", text: host }) : h("span", { text: "No link" }), h("span", { text: "Added " + fmtD(r.added) }),
+        h("span", { class: bySup(r) ? "chip fbchip" : "who", text: bySup(r) ? "Suggested by supervisor" : (r.byName ? "by " + r.byName : "") })),
+      r.note ? h("p", { class: "ref-note", text: r.note }) : null),
+    del);
 }
 function focusPaper(id) { S.openPapers.add(id); S.tab = "papers"; showTab(); const s = S.students.find(x => x.id === S.sel); if (s) refreshStudent(s); const el = document.getElementById("paper-" + id); if (el) { el.open = true; el.scrollIntoView({ block: "start" }); } }
 function focusTask(id) { S.openTasks.add(id); S.tab = "tasks"; showTab(); const t = S.tasks.find(x => x.id === id); if (t && isDone(t) && S.filter === "open") S.filter = "all"; const s = S.students.find(x => x.id === S.sel); if (s) refreshStudent(s); const el = document.getElementById("task-" + id); if (el) { el.open = true; el.scrollIntoView({ block: "start" }); } }
 
 function refreshStudent(s) {
   document.getElementById("s-name").textContent = s.name;
-  const sel = document.getElementById("stage-" + s.id); if (sel && document.activeElement !== sel) sel.value = s.stage || STAGES[0];
-  const idx = Math.max(0, STAGES.indexOf(s.stage));
-  document.getElementById("stagebar").replaceChildren(...STAGES.map((x, i) => h("span", { class: i <= idx ? "on" : "", title: x })));
+  const sel = document.getElementById("course-" + s.id); if (sel && document.activeElement !== sel) sel.value = courseOf(s);
   const mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), done = mine.filter(isDone), ms = S.meetings.filter(m => m.studentId === s.id);
   const avg = avgDays(mine), late = done.filter(t => metrics(t).late > 0).length, l = lastMeeting(s.id);
   const nextM = ms.map(m => m.next).filter(Boolean).sort().pop();
@@ -628,11 +752,16 @@ function refreshStudent(s) {
     stat(papersOf(s.id).filter(p => pStatus(p) === "Published").length, "Papers published"), stat(papersOf(s.id).filter(inReview).length, "Papers in review"),
     stat(ms.length, "Meetings"), stat(l ? diff(l, todayStr()) + "d" : "—", "Since last meeting"), stat(nextM ? fmtD(nextM) : "—", "Next meeting"));
   document.querySelectorAll("#task-filters button").forEach(b => b.setAttribute("aria-pressed", b.dataset.f === S.filter ? "true" : "false"));
-  const shown = (S.filter === "open" ? open.sort(sortTasks) : S.filter === "done" ? done.sort((a, b) => (b.doneAt || "").localeCompare(a.doneAt || "")) : [...open.sort(sortTasks), ...done]);
+  open.sort(sortTasks); done.sort((a, b) => (b.doneAt || "").localeCompare(a.doneAt || ""));
+  const groupHead = (label, n) => h("div", { class: "task-group" }, h("span", { text: label }), h("span", { class: "mono", text: String(n) }));
+  let items;
+  if (S.filter === "open") items = open.length ? open.map(taskCard) : [h("p", { class: "note", text: "No open tasks. Add one below or assign tasks in a meeting." })];
+  else if (S.filter === "done") items = done.length ? done.map(taskCard) : [h("p", { class: "note", text: "No completed tasks yet." })];
+  else items = [groupHead("Open", open.length), ...(open.length ? open.map(taskCard) : [h("p", { class: "note", text: "No open tasks." })]),
+    groupHead("Completed", done.length), ...(done.length ? done.map(taskCard) : [h("p", { class: "note", text: "No completed tasks yet." })])];
   const tl = document.getElementById("task-list");
   const editing = tl.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
-  if (!editing) tl.replaceChildren(...(shown.length ? shown.map(taskCard)
-    : [h("p", { class: "note", text: S.filter === "done" ? "No completed tasks yet." : "No open tasks. Add one below or assign tasks in a meeting." })]));
+  if (!editing) tl.replaceChildren(...items);
   refreshUpdRows(s);
   refreshPaperRows(s);
   const pp = papersOf(s.id).sort((a, b) => (pActive(b) - pActive(a)) || PSTATUS.indexOf(pStatus(b)) - PSTATUS.indexOf(pStatus(a)) || (b.createdAt || 0) - (a.createdAt || 0));
@@ -644,12 +773,28 @@ function refreshStudent(s) {
   document.getElementById("tabn-tasks").textContent = open.length;
   document.getElementById("tabn-papers").textContent = pp.length;
   document.getElementById("tabn-meetings").textContent = ms.length;
+  const refs = (S.refs || []).filter(r => r.studentId === s.id).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  document.getElementById("tabn-refs").textContent = refs.length;
+  refreshConfs();
+  document.getElementById("ref-count").textContent = plural(refs.length, "paper");
+  document.getElementById("ref-list").replaceChildren(...(refs.length ? refs.map(refItem) : [h("li", null, h("p", { class: "note", text: "No papers listed yet. Add a title and link below." }))]));
   const sorted = ms.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
   document.getElementById("meet-count").textContent = plural(sorted.length, "meeting");
   document.getElementById("meet-list").replaceChildren(...(sorted.length ? sorted.map(meetingItem) : [h("li", null, h("p", { class: "note", text: "No meetings logged yet." }))]));
   resolveNames();
 }
 function resolveNames() { /* names are stored with each entry */ }
+function bySup(x) { return !!x && (x.byRole === "supervisor" || x.byName === "Supervisor"); }
+const AUTO_REMARKS = ["Task assigned", "Assigned in meeting", "Paper added", "Marked as done", "Marked as not done by supervisor"];
+function remarkEl(x) {
+  if (!x.remark) return null;
+  if (bySup(x) && !AUTO_REMARKS.includes(x.remark)) return h("div", { class: "fb" }, h("span", { class: "fb-tag", text: "Supervisor feedback" }), h("p", { text: x.remark }));
+  return h("p", { text: x.remark });
+}
+function latestFeedback(item) {
+  const f = (item.history || []).filter(x => bySup(x) && x.remark && !AUTO_REMARKS.includes(x.remark)).sort((a, b) => (a.date || "").localeCompare(b.date || "")).pop();
+  return f ? h("div", { class: "fb fb-inline" }, h("span", { class: "fb-tag", text: "Supervisor · " + fmtD(f.date) }), h("span", { text: f.remark })) : null;
+}
 
 let builtFor = null;
 function renderDetail(force) {
@@ -666,15 +811,15 @@ function renderAll(force) {
   if (ae && document.activeElement && document.activeElement.id !== ae) { const el = document.getElementById(ae); if (el) el.focus({ preventScroll: true }); }
   if (Math.abs(window.scrollY - y) > 2) window.scrollTo({ top: y });
 }
-function select(id, taskId) { S.sel = id; builtFor = null; S.filter = "open"; renderAll(); window.scrollTo({ top: 0 }); if (taskId) focusTask(taskId); }
+function select(id, taskId) { S.sel = id; builtFor = null; S.filter = "all"; renderAll(); window.scrollTo({ top: 0 }); if (taskId) focusTask(taskId); }
 
 /* ---------- start-up: sign-in check, role, live data ---------- */
 const subs = {};
-function rebuildFlat() { for (const k of ["tasks", "meetings", "papers"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []); }
+function rebuildFlat() { for (const k of ["tasks", "meetings", "papers", "refs"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []); }
 function watchStudent(sid) {
   if (subs[sid]) return;
   const entry = subs[sid] = { data: {}, un: [] };
-  for (const k of ["tasks", "meetings", "papers"]) entry.un.push(S.db.collection(C(k, sid)).onSnapshot(snap => {
+  for (const k of ["tasks", "meetings", "papers", "refs"]) entry.un.push(S.db.collection(C(k, sid)).onSnapshot(snap => {
     entry.data[k] = snap.docs.map(doc => ({ ...doc.data(), id: doc.id, studentId: sid })); rebuildFlat(); renderAll();
   }, err => say("Couldn't load some " + k + ". Reload the page to try again.")));
 }
@@ -689,10 +834,16 @@ export async function start(pageRole) {
   if (pageRole === "supervisor" && !sup) { location.href = "student.html"; return; }
   if (pageRole === "student" && sup) { location.href = "dashboard.html"; return; }
   S.db = db; S.uid = user.uid; S.isOwner = sup;
-  S.myName = sup ? "Supervisor" : (user.displayName || "Student");
+  S.myName = sup ? "Supervisor" : (user.displayName || "Student"); S.myRole = sup ? "supervisor" : "student";
   document.getElementById("whoami").textContent = sup ? "Signed in as supervisor (" + user.email + ")" : "Signed in as " + (user.displayName || "student");
   S.timer = setTimeout(() => { if (S.loaded < NCOLL) { const n = document.getElementById("loadnote"); if (n) n.textContent = "Can't reach the saved records yet. They'll appear when the connection returns."; } }, 10000);
   renderAll();
+  db.collection("conferences").onSnapshot(snap => {
+    S.confs = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    const list = document.getElementById("conf-list");
+    const typing = confPanel && confPanel.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
+    if (list && !typing) refreshConfs();
+  }, () => {});
   if (sup) {
     const jp = document.getElementById("joinPanel"); jp.hidden = false;
     let seeded = false;

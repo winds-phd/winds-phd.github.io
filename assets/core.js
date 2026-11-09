@@ -35,6 +35,8 @@ export const setupSupervisor = (setupKey, email, password, name) => withSession(
 export const signIn = (id, secret) => withSession(call("login", { id, secret }));
 export const registerStudent = data => withSession(call("register", data));
 export const resetStudentSecret = (key, secret) => call("resetSecret", { key, secret });
+export const requestReset = id => call("forgot", { id });
+export const resetWithToken = (token, secret) => withSession(call("resetWithToken", { token, secret }));
 export async function signOut() { try { await call("logout"); } catch (e) { /* already signed out */ } saveToken(null); location.href = "index.html"; }
 export function authMessage(e) { return (e && e.message) || "Something went wrong. Try again."; }
 

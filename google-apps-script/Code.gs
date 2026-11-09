@@ -10,10 +10,13 @@
  *   3. Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone → copy the URL.
  *   4. Put that URL in assets/config.js on the website.
  *
- * Forgot the supervisor password? Run  newSetupKey  and do the supervisor setup again on the site (data is kept).
+ * Forgot a password or secret code? Use "Forgot?" on the sign-in page: a reset link is emailed (data is kept).
+ * Last resort for the supervisor: run  newSetupKey  and do the supervisor sign-up again on the site.
  */
 
 const DEFAULT_CLASS_CODE = "67890";
+const SITE_URL = "https://winds-phd.github.io/";   // reset links in emails point here
+const RESET_MINUTES = 60;                           // how long an emailed reset link works
 const SESSION_DAYS = 14;
 const HASH_ROUNDS = 1000;
 const MAX_DOC_CHARS = 45000;           // a Google Sheets cell holds up to 50,000 characters
@@ -76,7 +79,7 @@ function doPost(e) {
 
 function fail_(code, message) { const e = new Error(message); e.apiCode = code; throw e; }
 
-const WRITE_ACTIONS = { setup: 1, register: 1, resetSecret: 1, set: 1, update: 1, delete: 1, add: 1, login: 1, logout: 1 };
+const WRITE_ACTIONS = { resetWithToken: 1, setup: 1, register: 1, resetSecret: 1, set: 1, update: 1, delete: 1, add: 1, login: 1, logout: 1 };
 
 function handle_(req) {
   const action = String(req.action || "");
@@ -126,16 +129,58 @@ function dispatch_(action, req) {
       if (key.length < 3 || !SEGMENT.test(key)) fail_("invalid-argument", "Check your admission number.");
       if (String(req.secret || "").length < 6) fail_("invalid-argument", "Your secret code must be at least 6 characters.");
       if (!name) fail_("invalid-argument", "Enter your name.");
+      const email = String(req.email || "").trim().toLowerCase().slice(0, 120);
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail_("invalid-argument", "Enter a valid email address. It's used if you ever forget your secret code.");
       if (findUser_(login)) fail_("already-exists", "This admission number is already registered. Sign in, or ask your supervisor to reset your secret code.");
       createUser_(login, "student", name, String(req.secret));
       if (!getDoc_("students/" + key)) {
         putDoc_("students/" + key, {
-          name: name, admissionNo: adm.toUpperCase().slice(0, 40), topic: String(req.topic || "").trim().slice(0, 200),
+          name: name, email: email, admissionNo: adm.toUpperCase().slice(0, 40), topic: String(req.topic || "").trim().slice(0, 200),
           year: String(req.year || "").slice(0, 4), stage: String(req.stage || "").slice(0, 60), createdAt: Date.now()
         });
         bumpRev_();
       }
       return newSession_(findUser_(login));
+    }
+
+    case "forgot": {
+      // Always answer the same way, so nobody can find out which admission numbers or emails exist.
+      const ident = String(req.id || "").trim();
+      const login = ident.indexOf("@") >= 0 ? ident.toLowerCase() : "student:" + admKey_(ident);
+      const u = findUser_(login);
+      const cache = CacheService.getScriptCache(), rk = "m:" + login, sent = Number(cache.get(rk) || 0);
+      if (u && sent < 3) {
+        const to = u.role === "supervisor" ? u.login : String((getDoc_("students/" + login.slice(8)) || {}).email || "").trim();
+        if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
+          const token = Utilities.getUuid() + Utilities.getUuid();
+          cache.put("r:" + sha_(token), login, RESET_MINUTES * 60);
+          cache.put(rk, String(sent + 1), 3600);
+          const link = SITE_URL + "reset.html?t=" + encodeURIComponent(token);
+          const who = u.role === "supervisor" ? "password" : "secret code";
+          MailApp.sendEmail({
+            to: to, name: "PhD Supervision Log",
+            subject: "Reset your PhD Supervision Log " + who,
+            body: "Hello " + (u.name || "") + ",\n\nSomeone asked to reset the " + who + " for your PhD Supervision Log account. Open this link within " + RESET_MINUTES + " minutes to choose a new one:\n\n" + link +
+                  "\n\nYour tasks, papers and meetings are not affected.\nIf you didn't ask for this, ignore this email; nothing changes.",
+            htmlBody: "<p>Hello " + escapeHtml_(u.name || "") + ",</p><p>Someone asked to reset the " + who + " for your <b>PhD Supervision Log</b> account. Open this link within " + RESET_MINUTES + " minutes to choose a new one:</p>" +
+                      "<p><a href=\"" + link + "\" style=\"display:inline-block;padding:10px 16px;background:#1f5f6b;color:#fff;border-radius:6px;text-decoration:none\">Choose a new " + who + "</a></p>" +
+                      "<p>Your tasks, papers and meetings are not affected.<br>If you didn't ask for this, ignore this email; nothing changes.</p>"
+          });
+        }
+      }
+      return {};
+    }
+
+    case "resetWithToken": {
+      const th = sha_(String(req.token || "")), cache = CacheService.getScriptCache();
+      const login = req.token ? cache.get("r:" + th) : null;
+      const u = login ? findUser_(login) : null;
+      if (!u) fail_("expired", "This reset link has expired or was already used. Ask for a new one.");
+      const secret = String(req.secret || ""), min = u.role === "supervisor" ? 8 : 6;
+      if (secret.length < min) fail_("invalid-argument", "Choose at least " + min + " characters.");
+      setSecret_(u.login, secret);
+      cache.remove("r:" + th);   // a link works once
+      return newSession_(findUser_(u.login));
     }
 
     case "resetSecret": {
@@ -170,6 +215,7 @@ function dispatch_(action, req) {
       let data = req.data;
       if (!data || typeof data !== "object" || Array.isArray(data)) fail_("invalid-argument", "A record must be an object.");
       const cur = getDoc_(path);
+      if (segs[0] === "conferences" && u.role !== "supervisor" && cur && cur.createdBy !== u.login) fail_("permission-denied", "You can only change conference entries you added.");
       if (action === "update") { if (!cur) fail_("not-found", "That record no longer exists."); data = Object.assign({}, cur, data); }
       putDoc_(path, data); bumpRev_();
       return {};
@@ -178,7 +224,8 @@ function dispatch_(action, req) {
     case "delete": {
       const u = requireUser_(req), segs = docPath_(req.path), path = segs.join("/");
       if (!canSee_(u, segs)) fail_("permission-denied", "You don't have access to this record.");
-      if (u.role === "student" && segs.length === 2) fail_("permission-denied", "Only the supervisor can remove a student.");
+      if (u.role === "student" && segs[0] === "students" && segs.length === 2) fail_("permission-denied", "Only the supervisor can remove a student.");
+      if (segs[0] === "conferences" && u.role !== "supervisor" && (getDoc_(path) || {}).createdBy !== u.login) fail_("permission-denied", "You can only remove conference entries you added.");
       deleteDoc_(path);
       if (u.role === "supervisor" && segs.length === 2 && segs[0] === "students") {
         deletePrefix_(path + "/");
@@ -193,6 +240,7 @@ function dispatch_(action, req) {
       if (!canSee_(u, segs)) fail_("permission-denied", "You don't have access to these records.");
       const data = req.data;
       if (!data || typeof data !== "object" || Array.isArray(data)) fail_("invalid-argument", "A record must be an object.");
+      if (segs[0] === "conferences") data.createdBy = u.login;   // record who added it, so only they (or the supervisor) can remove it
       const id = Utilities.getUuid().replace(/-/g, "").slice(0, 20);
       putDoc_(segs.join("/") + "/" + id, data); bumpRev_();
       return { id: id };
@@ -203,9 +251,11 @@ function dispatch_(action, req) {
 
 /* ================================================================ access rules */
 
-/** Supervisor: everything. Student: only students/<their admission key> and what's under it. */
+/** Supervisor: everything. Student: only students/<their admission key> and what's under it,
+ *  plus the shared "conferences" list, which everyone in the group can read and add to. */
 function canSee_(u, segs) {
   if (u.role === "supervisor") return true;
+  if (segs[0] === "conferences") return true;
   return segs.length >= 2 && segs[0] === "students" && segs[1] === u.login.slice("student:".length);
 }
 function splitPath_(p) {
@@ -261,6 +311,7 @@ function bumpRev_() { PropertiesService.getScriptProperties().setProperty("REV",
 /* ================================================================ accounts and sessions */
 
 function admKey_(adm) { return String(adm || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
+function escapeHtml_(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 function hex_(bytes) { return bytes.map(b => ((b + 256) % 256).toString(16).padStart(2, "0")).join(""); }
 function sha_(s) { return hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8)); }
 function hashSecret_(secret, salt) { let h = salt + ":" + secret; for (let i = 0; i < HASH_ROUNDS; i++) h = sha_(h + ":" + salt); return h; }

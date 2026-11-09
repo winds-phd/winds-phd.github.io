@@ -28,11 +28,14 @@
           <label class="fieldlabel">Secret code (6+ characters)<input id="secret" type="password" required minlength="6" autocomplete="new-password"></label>
           <label class="fieldlabel">Repeat secret code<input id="secret2" type="password" required minlength="6" autocomplete="new-password"></label>
         </div>
-        <label class="fieldlabel">Full name<input id="name" required maxlength="80"></label>
-        <label class="fieldlabel">Thesis topic<input id="topic" maxlength="200" placeholder="Working title"></label>
+        <div class="row">
+          <label class="fieldlabel">Full name<input id="name" required maxlength="80"></label>
+          <label class="fieldlabel">Email (for resetting your secret code)<input id="email" type="email" required maxlength="120" autocomplete="email"></label>
+        </div>
+        <label class="fieldlabel">Thesis / project topic<input id="topic" maxlength="200" placeholder="Working title"></label>
         <div class="row">
           <label class="fieldlabel">Admission year<input id="year" type="number" min="1990" max="2100"></label>
-          <label class="fieldlabel">Current stage<select id="stage"></select></label>
+          <label class="fieldlabel">Course<select id="stage"></select></label>
         </div>
         <p class="err" id="err" role="alert"></p>
         <button class="btn block" type="submit" id="btn">Create my account</button>
@@ -46,7 +49,7 @@
 <script type="module">
   import { registerStudent, authMessage, configured, setupNotice } from "./assets/core.js";
   if (!configured) setupNotice(document.getElementById("card"));
-  const STAGES = ["Coursework", "Comprehensive exam", "Research proposal", "Research work", "Open seminar / pre-submission", "Thesis submitted", "Viva voce", "Awarded"];
+  const STAGES = ["PhD", "Masters", "B-Tech"];  // course; saved in the record as the student's course
   const $ = id => document.getElementById(id);
   for (const s of STAGES) { const o = document.createElement("option"); o.value = o.textContent = s; $("stage").append(o); }
 
@@ -54,11 +57,12 @@
     e.preventDefault(); $("err").textContent = "";
     const v = id => $(id).value.trim();
     if (!v("code") || !v("adm") || !v("name")) { $("err").textContent = "Fill in the class code, your admission number and your name."; return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v("email"))) { $("err").textContent = "Enter a valid email. It's used if you ever forget your secret code."; return; }
     if ($("secret").value.length < 6) { $("err").textContent = "Your secret code must be at least 6 characters."; return; }
     if ($("secret").value !== $("secret2").value) { $("err").textContent = "The two secret codes don't match."; return; }
     $("btn").disabled = true;
     try {
-      await registerStudent({ code: v("code"), adm: v("adm"), secret: $("secret").value, name: v("name"), topic: v("topic"), year: v("year"), stage: $("stage").value });
+      await registerStudent({ code: v("code"), adm: v("adm"), secret: $("secret").value, name: v("name"), email: v("email"), topic: v("topic"), year: v("year"), stage: $("stage").value });
       location.href = "student.html";
     } catch (err) { $("err").textContent = authMessage(err); }
     finally { $("btn").disabled = false; }
