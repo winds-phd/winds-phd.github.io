@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1940";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-2130";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -61,6 +61,7 @@ function h(tag, props, ...kids) {
   return el;
 }
 /* ---------- dates & task metrics ---------- */
+function localDate(ms) { const d = new Date(ms); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 function todayStr() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 function parseD(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
 function diff(a, b) { return Math.round((parseD(b) - parseD(a)) / 86400000); }
@@ -68,12 +69,16 @@ function fmtD(s) { return s ? parseD(s).toLocaleDateString("en-IN", { day: "nume
 function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
 function isDone(t) { return t.status === "Done"; }
 function statusOf(t) { return t.status || "Not started"; }
-function startOf(t) { return t.assigned || (t.createdAt ? new Date(t.createdAt).toISOString().slice(0, 10) : todayStr()); }
+function startOf(t) { return t.assigned || (t.createdAt > 1e12 ? localDate(t.createdAt) : (t.history || []).map(x => x.date).filter(Boolean).sort()[0] || todayStr()); }
+/** When a done task was finished: its recorded date, else the last "Done" entry in its history. */
+function doneDateOf(t) { return t.doneAt || ((t.history || []).filter(x => x.status === "Done" && x.date).map(x => x.date).sort().pop()) || null; }
 function metrics(t) {
   const start = startOf(t), today = todayStr();
-  if (isDone(t) && t.doneAt) {
-    const taken = Math.max(0, diff(start, t.doneAt));
-    const late = t.due ? diff(t.due, t.doneAt) : null;
+  if (isDone(t)) {
+    const fin = doneDateOf(t);
+    if (!fin) return { done: true, taken: null, late: null, label: "Finished", cls: "good", timing: "Done" };
+    const taken = Math.max(0, diff(start, fin));
+    const late = t.due ? diff(t.due, fin) : null;
     return { done: true, taken, late, label: taken === 0 ? "Finished same day" : "Finished in " + plural(taken, "day"),
       cls: late != null && late > 0 ? "bad" : "good", timing: late == null ? "No due date" : late > 0 ? plural(late, "day") + " late" : late === 0 ? "On the due date" : plural(-late, "day") + " early" };
   }
@@ -96,7 +101,7 @@ function studentName(id) { const s = S.students.find(x => x.id === id); return s
 function lastMeeting(sid) { return S.meetings.filter(m => m.studentId === sid).map(m => m.date).sort().pop() || null; }
 function tasksOf(sid) { return S.tasks.filter(t => !sid || t.studentId === sid); }
 function sortTasks(a, b) { const ad = a.due || "9999", bd = b.due || "9999"; return ad < bd ? -1 : ad > bd ? 1 : (a.createdAt || 0) - (b.createdAt || 0); }
-function avgDays(list) { const d = list.filter(t => isDone(t) && t.doneAt).map(t => metrics(t).taken); return d.length ? Math.round(d.reduce((a, b) => a + b, 0) / d.length) : null; }
+function avgDays(list) { const d = list.filter(isDone).map(t => metrics(t).taken).filter(x => x != null); return d.length ? Math.round(d.reduce((a, b) => a + b, 0) / d.length) : null; }
 
 let statusT;
 function say(msg) { const el = document.getElementById("status"); el.textContent = msg; el.hidden = false; clearTimeout(statusT); statusT = setTimeout(() => el.hidden = true, 4000); }
@@ -115,10 +120,16 @@ async function write(fn, okMsg) {
 
 /* ---------- header + roster ---------- */
 function stat(n, label, alert) { return h("div", { class: "stat" + (alert ? " alert" : "") }, h("b", { text: n }), h("span", { class: "label", text: label })); }
+/** No meeting logged in the last 30 days (students who joined less than 30 days ago aren't counted yet). */
+function isStale(s) {
+  const l = lastMeeting(s.id);
+  if (l) return diff(l, todayStr()) > 30;
+  return s.createdAt > 1e12 ? diff(localDate(s.createdAt), todayStr()) > 30 : false;
+}
 function renderStats() {
   if (!S.isOwner) { document.getElementById("stats").replaceChildren(); return; }
   const all = tasksOf(), open = all.filter(t => !isDone(t)), done = all.filter(isDone), od = open.filter(isOverdue);
-  const stale = S.students.filter(s => { const l = lastMeeting(s.id); return !l || diff(l, todayStr()) > 30; });
+  const stale = S.students.filter(isStale);
   const avg = avgDays(all);
   document.getElementById("stats").replaceChildren(
     stat(S.students.length, "Students"), stat(open.length, "Open tasks"), stat(od.length, "Overdue", od.length),
@@ -171,15 +182,15 @@ function renderOverview() {
         h("td", { text: t.title }), h("td", null, statusChip(statusOf(t))), h("td", null, progBar(t.progress)),
         h("td", { class: "num", text: fmtD(startOf(t)) }), h("td", { class: "num", text: m.elapsed }), h("td", null, timingChip(t))); }))))
       : h("p", { class: "note", text: "No current tasks." }));
-  const done = tasksOf().filter(t => isDone(t)).sort((a, b) => (b.doneAt || "").localeCompare(a.doneAt || "")).slice(0, 12);
+  const done = tasksOf().filter(t => isDone(t)).sort((a, b) => (doneDateOf(b) || "").localeCompare(doneDateOf(a) || "")).slice(0, 12);
   const donePanel = h("section", { class: "panel sec-tasks" },
     h("div", { class: "panel-head" }, h("h3", { text: "Recently completed" }), h("span", { class: "muted", text: avgDays(tasksOf()) == null ? "" : "Average " + plural(avgDays(tasksOf()), "day") + " to finish" })),
     done.length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Student", "Task", "Assigned", "Finished", "Days taken", "Against due date"].map(x => h("th", { text: x })))),
       h("tbody", null, done.map(t => { const m = metrics(t); return h("tr", null,
         h("td", null, h("button", { class: "linkish", type: "button", text: studentName(t.studentId), onclick: () => select(t.studentId, t.id) })),
-        h("td", { text: t.title }), h("td", { class: "num", text: fmtD(startOf(t)) }), h("td", { class: "num", text: fmtD(t.doneAt) }),
-        h("td", { class: "num", text: m.taken }), h("td", null, timingChip(t))); }))))
+        h("td", { text: t.title }), h("td", { class: "num", text: fmtD(startOf(t)) }), h("td", { class: "num", text: fmtD(doneDateOf(t)) }),
+        h("td", { class: "num", text: m.taken == null ? "—" : String(m.taken) }), h("td", null, timingChip(t))); }))))
       : h("p", { class: "note", text: "Completed tasks will appear here with the number of days each one took." }));
   const recent = [...S.meetings].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 6);
   const meetPanel = h("section", { class: "panel sec-meet" },
@@ -215,22 +226,40 @@ function inReview(p) { return ["Submitted", "Under review", "Revision"].includes
 function pLabel(s) { return s === "Currently writing" ? "Draft (currently writing)" : s; }
 function pChip(s) { s = normStatus(s); return h("span", { class: "chip " + (PSTATUS_CLASS[s] ?? ""), text: s === "Currently writing" ? "Draft" : s }); }
 function pMetrics(p) {
+  // The label always follows the paper's CURRENT status; dates fill in the detail when we have them.
   const today = todayStr(), st = pStatus(p);
   const last = (p.history || []).map(x => x.date).filter(Boolean).sort().pop() || p.statusSince || today;
+  const since = p.statusSince || last;                       // when it reached its current status
   const inStatus = Math.max(0, diff(last, today));
-  let review = null, reviewLabel = st === "Currently writing" ? "Writing for " + plural(Math.max(0, diff(p.statusSince || last || startOfPaper(p), today)), "day") : "Not submitted yet";
-  if (p.submittedOn) {
-    const end = p.acceptedOn || (st === "Rejected" ? p.decisionOn : null) || today;
-    review = Math.max(0, diff(p.submittedOn, end));
-    reviewLabel = p.acceptedOn ? "Accepted after " + plural(review, "day") : st === "Rejected" ? "Rejected after " + plural(review, "day") : "In review for " + plural(review, "day");
+  const days = (a, b) => Math.max(0, diff(a, b));
+  let review = null, reviewLabel = "", cls = "";
+  if (st === "Currently writing") {
+    reviewLabel = "Writing for " + plural(days(since || startOfPaper(p), today), "day");
+  } else if (["Submitted", "Under review", "Revision"].includes(st)) {
+    const sub = p.submittedOn || since;
+    review = days(sub, today);
+    reviewLabel = (st === "Revision" ? "In revision · " : "In review for ") + plural(review, "day") + (st === "Revision" ? " since submission" : "");
+    cls = review > 180 ? "bad" : "";
+  } else if (st === "Accepted" || st === "Published") {
+    const acc = p.acceptedOn || (st === "Accepted" ? since : null);
+    if (p.submittedOn && acc) review = days(p.submittedOn, acc);
+    reviewLabel = st === "Published" ? "Published" + (p.publishedOn || since ? " on " + fmtD(p.publishedOn || since) : "")
+      : "Accepted" + (acc ? " on " + fmtD(acc) : "");
+    if (review != null) reviewLabel += " · " + plural(review, "day") + " in review";
+    cls = "good";
+  } else if (st === "Rejected") {
+    const dec = p.decisionOn || since;
+    if (p.submittedOn && dec) review = days(p.submittedOn, dec);
+    reviewLabel = "Rejected" + (dec ? " on " + fmtD(dec) : "");
+    cls = "bad";
   }
-  const firstDecision = p.submittedOn && p.firstDecisionOn ? Math.max(0, diff(p.submittedOn, p.firstDecisionOn)) : null;
-  return { inStatus, review, reviewLabel, firstDecision, last };
+  const firstDecision = p.submittedOn && p.firstDecisionOn ? days(p.submittedOn, p.firstDecisionOn) : null;
+  return { inStatus, review, reviewLabel, firstDecision, last, cls };
 }
-function startOfPaper(p) { return p.createdAt ? new Date(p.createdAt).toISOString().slice(0, 10) : todayStr(); }
+function startOfPaper(p) { return p.createdAt > 1e12 ? localDate(p.createdAt) : ((p.history || []).map(x => x.date).filter(Boolean).sort()[0] || p.statusSince || todayStr()); }
 function stampDates(p, status, date) {
   const patch = {};
-  if (status === "Submitted" && !p.submittedOn) patch.submittedOn = date;
+  if (["Submitted", "Under review", "Revision"].includes(status) && !p.submittedOn) patch.submittedOn = date;
   if (["Revision", "Accepted", "Rejected"].includes(status) && p.submittedOn && !p.firstDecisionOn) patch.firstDecisionOn = date;
   if (status === "Accepted" && !p.acceptedOn) patch.acceptedOn = date;
   if (status === "Published") { if (!p.publishedOn) patch.publishedOn = date; if (!p.acceptedOn && p.submittedOn) patch.acceptedOn = date; }
@@ -252,7 +281,7 @@ function paperCard(p) {
           p.authors ? h("span", { class: "who", text: p.authors }) : null),
         latestFeedback(p)),
       h("div", { class: "t-right" },
-        h("span", { class: "days" + (inReview(p) && m.review > 180 ? " bad" : p.acceptedOn ? " good" : ""), text: m.reviewLabel }),
+        h("span", { class: "days " + m.cls, text: m.reviewLabel }),
         h("span", { class: "who", text: plural(m.inStatus, "day") + " in current status" }),
         p.overleaf ? h("a", { class: "btn small overleaf", href: p.overleaf, target: "_blank", rel: "noopener", text: "Overleaf ↗", onclick: e => e.stopPropagation() })
           : (st === "Currently writing" ? h("span", { class: "chip warn", text: "No Overleaf link" }) : null))));
@@ -370,6 +399,7 @@ function buildStudent(s) {
   const taskForm = h("form", { hidden: !S.canWrite, class: "edit-box", onsubmit: async e => {
       e.preventDefault(); const title = val("nt-title").trim(); if (!title) return;
       const assigned = val("nt-assigned") || todayStr();
+      if (val("nt-due") && val("nt-due") < assigned) { say("The due date can't be before the assigned date."); return; }
       const ok = await write(db => db.collection(C("tasks", s.id)).add({ studentId: s.id, title, details: val("nt-details").trim(), owner: val("nt-owner"), assigned, due: val("nt-due"),
         status: "Not started", progress: 0, doneAt: "", createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole,
         history: [{ date: assigned, status: "Not started", progress: 0, remark: "Task assigned", via: "assigned", by: S.uid, byName: S.myName, byRole: S.myRole }] }), "Task added");
@@ -487,14 +517,14 @@ function taskCard(t) {
       h("span", { class: "plus", "aria-hidden": "true" })));
   const top = h("div", { class: "task-top" },
       h("div", { class: "daybox " + (m.done ? (m.late > 0 ? "bad" : "good") : m.cls), title: m.done ? "Days taken to finish" : "Days since the task was assigned" },
-        h("b", { text: m.done ? m.taken : m.elapsed }), h("span", { text: m.done ? "days taken" : "days so far" })),
+        h("b", { text: m.done ? (m.taken == null ? "✓" : m.taken) : m.elapsed }), h("span", { text: m.done ? (m.taken == null ? "done" : "days taken") : "days so far" })),
       h("div", { style: "min-width:0" },
         h("div", { class: "t-sub", style: "margin-top:0" }, statusChip(st), ownerChip(t), h("span", { text: "Assigned " + fmtD(startOf(t)) }), h("span", { text: "Due " + fmtD(t.due) }), timingChip(t)),
         latestFeedback(t)),
       h("div", { class: "t-right" }, progBar(isDone(t) ? 100 : t.progress), h("span", { class: "days " + m.cls, text: m.label }), quickToggle(t)));
   const facts = h("dl", { class: "facts" },
     [["Status", st], ["Progress", (isDone(t) ? 100 : (t.progress || 0)) + "%"], ["Assigned", fmtD(startOf(t))], ["Due", fmtD(t.due)],
-     ["Completed", isDone(t) ? fmtD(t.doneAt) : "Not yet"], [m.done ? "Days taken" : "Days elapsed", String(m.done ? m.taken : m.elapsed)],
+     ["Completed", isDone(t) ? fmtD(doneDateOf(t)) : "Not yet"], [m.done ? "Days taken" : "Days elapsed", m.done ? (m.taken == null ? "—" : String(m.taken)) : String(m.elapsed)],
      ["Against due date", m.timing], ["Updates logged", String((t.history || []).length)]].map(([k, v]) => h("div", null, h("dt", { text: k }), h("dd", { text: v }))));
   const hist = (t.history || []).map((x, i) => [x, i]).sort((a, b) => (b[0].date || "").localeCompare(a[0].date || "") || b[1] - a[1]).map(p => p[0]);
   const histEl = hist.length ? h("ol", { class: "hist" }, hist.map(x => h("li", null,
@@ -548,6 +578,7 @@ function editForm(t) {
       e.preventDefault();
       const status = sel.value, progress = status === "Done" ? 100 : Number(range.value), date = val("ed-" + id) || todayStr(), remark = val("er-" + id).trim();
       const due = val("eu-" + id), details = val("et-" + id).trim();
+      if (due && due < startOf(t)) { say("The due date can't be before the assigned date (" + fmtD(startOf(t)) + ")."); return; }
       const entry = { date, status, progress, remark, via: "edit", by: S.uid, byName: S.myName, byRole: S.myRole };
       const changedProgress = status !== st || progress !== (t.progress || 0) || remark;
       const patch = { status, progress, due, details, doneAt: status === "Done" ? (isDone(t) && t.doneAt ? t.doneAt : date) : "" };
@@ -633,6 +664,7 @@ async function submitMeeting(s, f) {
   }
   const actions = val("nm-actions").split("\n").map(x => x.trim()).filter(Boolean), due = val("nm-due");
   if (!notes && !updates.length && !pupdates.length && !actions.length) { say("Add notes, a task or paper update, or a new task first."); return; }
+  if (actions.length && due && due < date) { say("New tasks can't be due before the meeting date."); return; }
   const ok = await write(async db => {
     const newTasks = [];
     for (const a of actions) {
@@ -694,6 +726,7 @@ function confPanelEl() {
       e.preventDefault();
       const name = val("nc-name").trim(); let url = val("nc-url").trim(); const deadline = val("nc-deadline");
       if (!name || !deadline) { say("Add the conference name and its deadline."); return; }
+      if (deadline < todayStr()) { say("That deadline has already passed. Check the date."); return; }
       if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
       const ok = await write(db => db.collection("conferences").add({ name, url, deadline, note: val("nc-note").trim(), createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole }), "Conference added for everyone");
       if (ok) ["nc-name", "nc-url", "nc-deadline", "nc-note"].forEach(id => document.getElementById(id).value = "");
@@ -817,6 +850,7 @@ function minePage() {
       let link = val("nm2-link").trim(); if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
       if (!title) { say("Write what the task or reminder is."); return; }
       if (k === "reminder" && !date) { say("A reminder needs a date (and usually a time)."); return; }
+      if (k === "reminder" && (date + "T" + (time || "23:59")) < nowKey()) { say("That time has already passed. Check the date and time."); return; }
       const ok = await write(db => db.collection("supervisor/me/items").add({ kind: k, title, date, time, link: k === "reminder" ? link : "", location: val("nm2-loc").trim(), notes: val("nm2-notes").trim(), done: false, doneAt: "", createdAt: Date.now() }),
         k === "reminder" ? "Reminder added" : "Task added");
       if (ok) ["nm2-title", "nm2-time", "nm2-link", "nm2-loc", "nm2-notes"].forEach(id => document.getElementById(id).value = "");
@@ -866,6 +900,7 @@ function schedPage() {
       const everyone = k === "group" && document.getElementById("ns-all").checked;
       const people = k === "individual" ? [val("ns-one")].filter(Boolean) : everyone ? S.students.map(s => s.id) : [...document.querySelectorAll("#ns-people input:checked")].map(i => i.value);
       if (!date || !time) { say("Choose the date and time."); return; }
+      if (date + "T" + time < nowKey()) { say("That time has already passed. Check the date and time."); return; }
       if (!people.length) { say(k === "individual" ? "Choose the student." : "Choose at least one student, or tick All students."); return; }
       if (k === "group" && !everyone && people.length < 2) { say("A group meeting needs two or more students. Use Individual for one student."); return; }
       const groupId = "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -946,7 +981,8 @@ function refreshStudent(s) {
   document.getElementById("s-name").textContent = s.name;
   const sel = document.getElementById("course-" + s.id); if (sel && document.activeElement !== sel) sel.value = courseOf(s);
   const mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), done = mine.filter(isDone), ms = S.meetings.filter(m => m.studentId === s.id);
-  const avg = avgDays(mine), late = done.filter(t => metrics(t).late > 0).length, l = lastMeeting(s.id);
+  const withDue = done.filter(t => metrics(t).late != null);
+  const avg = avgDays(mine), late = withDue.filter(t => metrics(t).late > 0).length, l = lastMeeting(s.id);
   const mySched = upcomingSched(s.id);
   const nextM = [...ms.map(m => m.next).filter(n => n && n >= todayStr()), ...mySched.map(x => x.date)].sort()[0];
   document.getElementById("next-banner").replaceChildren(...(mySched[0] ? [nextBanner(mySched[0])] : []));
@@ -955,11 +991,11 @@ function refreshStudent(s) {
     : [h("li", null, h("p", { class: "note", text: S.isOwner ? "Nothing scheduled with this student. Use \"Scheduled meetings\" in the left column." : "No meetings scheduled. Your supervisor's invitations will appear here." }))]));
   document.getElementById("s-figs").replaceChildren(
     stat(open.length, "Open tasks"), stat(open.filter(isOverdue).length, "Overdue", open.filter(isOverdue).length), stat(done.length, "Completed"),
-    stat(avg == null ? "—" : avg + "d", "Avg. days to finish"), stat(done.length ? (done.length - late) + "/" + done.length : "—", "Finished on time"),
+    stat(avg == null ? "—" : avg + "d", "Avg. days to finish"), stat(withDue.length ? (withDue.length - late) + "/" + withDue.length : "—", "Finished on time"),
     stat(pubCounts(papersOf(s.id)).draft, "Draft papers"), stat(pubCounts(papersOf(s.id)).submitted, "Submitted papers"), stat(pubCounts(papersOf(s.id)).accepted, "Accepted papers"),
     stat(ms.length, "Meetings"), stat(l ? diff(l, todayStr()) + "d" : "—", "Since last meeting"), stat(nextM ? fmtD(nextM) : "—", "Next meeting"));
   document.querySelectorAll("#task-filters button").forEach(b => b.setAttribute("aria-pressed", b.dataset.f === S.filter ? "true" : "false"));
-  open.sort(sortTasks); done.sort((a, b) => (b.doneAt || "").localeCompare(a.doneAt || ""));
+  open.sort(sortTasks); done.sort((a, b) => (doneDateOf(b) || "").localeCompare(doneDateOf(a) || ""));
   const groupHead = (label, n) => h("div", { class: "task-group" }, h("span", { text: label }), h("span", { class: "mono", text: String(n) }));
   let items;
   if (S.filter === "open") items = open.length ? open.map(taskCard) : [h("p", { class: "note", text: "No current tasks. Add one above or assign tasks in a meeting." })];

@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="assets/app.css?v=20261109-1940">
-<script src="assets/theme.js?v=20261109-1940"></script>
+<link rel="stylesheet" href="assets/app.css?v=20261109-2130">
+<script src="assets/theme.js?v=20261109-2130"></script>
 </head>
 <body>
 <div class="auth-wrap">
@@ -48,7 +48,7 @@
 </div>
 
 <script type="module">
-  import { registerStudent, authMessage, configured, setupNotice } from "./assets/core.js?v=20261109-1940";
+  import { registerStudent, authMessage, configured, setupNotice } from "./assets/core.js?v=20261109-2130";
   if (!configured) setupNotice(document.getElementById("card"));
   const STAGES = ["PhD", "Masters", "B-Tech"];  // course; saved in the record as the student's course
   const $ = id => document.getElementById(id);
@@ -58,6 +58,8 @@
     e.preventDefault(); $("err").textContent = "";
     const v = id => $(id).value.trim();
     if (!v("code") || !v("adm") || !v("name")) { $("err").textContent = "Fill in the lab code, your admission number and your name."; return; }
+    const yr = Number(v("year")), thisYear = new Date().getFullYear();
+    if (v("year") && (!(yr >= 1990) || yr > thisYear + 1)) { $("err").textContent = "Check the admission year (1990–" + (thisYear + 1) + ")."; return; }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v("email"))) { $("err").textContent = "Enter a valid email. It's used if you ever forget your password."; return; }
     if ($("secret").value.length < 6) { $("err").textContent = "Your password must be at least 6 characters."; return; }
     if ($("secret").value !== $("secret2").value) { $("err").textContent = "The two passwords don't match."; return; }
