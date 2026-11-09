@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1535";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1610";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -28,7 +28,7 @@ const PTYPES = ["Journal article", "Conference paper", "Review article", "Book c
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
-const S = { schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
+const S = { mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag); let val;
@@ -114,6 +114,9 @@ function renderStats() {
 function renderRoster() {
   const items = [h("button", { class: "r-item", type: "button", "aria-current": S.sel === null ? "true" : "false", onclick: () => select(null) },
     h("span", { class: "nm", text: "Group overview" }), h("span", { class: "meta", text: "All tasks and recent meetings" })),
+    h("button", { class: "r-item r-mine", type: "button", "aria-current": S.sel === "__mine" ? "true" : "false", onclick: () => select("__mine") },
+      h("span", { class: "nm", text: "My tasks & reminders" }),
+      h("span", { class: "meta" }, ...mineMeta())),
     h("button", { class: "r-item r-conf", type: "button", "aria-current": S.sel === "__confs" ? "true" : "false", onclick: () => select("__confs") },
       h("span", { class: "nm", text: "Upcoming conferences" }),
       h("span", { class: "meta", text: (() => { const n = (S.confs || []).filter(c => !c.deadline || diff(todayStr(), c.deadline) >= 0).length; return n ? plural(n, "upcoming deadline") : "Add and view conference deadlines"; })() })),
@@ -186,7 +189,7 @@ function renderOverview() {
         h("td", null, pChip(pStatus(p))), h("td", { class: "num", text: m.review == null ? "—" : m.review + "d" }),
         h("td", null, p.overleaf ? h("a", { class: "ext", href: p.overleaf, target: "_blank", rel: "noopener", text: "Overleaf ↗" }) : h("span", { class: "muted", text: "—" })))]; }))))
       : h("p", { class: "note", text: "Papers added on a student's Publications tab appear here with their status and review time." }));
-  d.replaceChildren(openPanel, papPanel, donePanel, meetPanel);
+  d.replaceChildren(...[todayPanel(), openPanel, papPanel, donePanel, meetPanel].filter(Boolean));
 }
 
 /* ---------- publications ---------- */
@@ -751,6 +754,93 @@ function schedItem(x, showPeople) {
     h("div", { style: "display:grid;gap:6px;justify-items:end" },
       x.link ? h("a", { class: "btn small", href: x.link, target: "_blank", rel: "noopener", text: "Join ↗" }) : null, cancel));
 }
+/* ---------- supervisor's own tasks and reminders (stored under supervisor/me, never shown to students) ---------- */
+function itemKey(x) { return (x.date || "9999-12-31") + "T" + (x.time || "23:59"); }
+function mineBuckets() {
+  const now = nowKey(), today = todayStr();
+  // the supervisor's own items, plus upcoming meetings scheduled with students (read-only)
+  const sched = upcomingSched().map(x => ({ ...x, id: "s-" + (x.groupId || x.id), kind: "meeting", title: (x.kind === "group" ? "Group meeting" : "Meeting with " + (x.attendees || []).map(studentName).join(", ")), fromSchedule: true }));
+  const open = [...(S.mine || []).filter(x => !x.done), ...sched].sort((a, b) => itemKey(a).localeCompare(itemKey(b)));
+  return {
+    overdue: open.filter(x => x.date && (x.time ? itemKey(x) < now : x.date < today) && !x.fromSchedule),
+    today: open.filter(x => x.date === today && !(x.time && itemKey(x) < now && !x.fromSchedule)),
+    upcoming: open.filter(x => x.date && x.date > today),
+    nodate: open.filter(x => !x.date),
+    done: (S.mine || []).filter(x => x.done).sort((a, b) => (b.doneAt || "").localeCompare(a.doneAt || ""))
+  };
+}
+function mineMeta() {
+  const b = mineBuckets();
+  if (!b.overdue.length && !b.today.length) return [h("span", { text: (S.mine || []).filter(x => !x.done).length ? "Nothing due today" : "Your own to-do list" })];
+  return [b.today.length ? h("span", { class: "chip warn", text: b.today.length + " today" }) : null, b.overdue.length ? h("span", { class: "chip bad", text: b.overdue.length + " overdue" }) : null];
+}
+function mineItem(x) {
+  const isRem = x.kind === "reminder", isMeet = x.kind === "meeting";
+  const when = x.date ? whenText(x) : "No date";
+  const tick = isMeet ? h("span", { class: "mine-icon", text: "◷", title: "Scheduled meeting" }) : h("input", { type: "checkbox", class: "mine-tick", checked: !!x.done, "aria-label": "Mark done",
+    onchange: e => write(db => db.doc("supervisor/me/items/" + x.id).update({ done: e.target.checked, doneAt: e.target.checked ? todayStr() : "" }), e.target.checked ? "Done" : "Moved back to open") });
+  let armed = null;
+  const del = isMeet ? null : h("button", { class: "x", type: "button", text: "Delete" });
+  if (del) del.onclick = () => { if (!armed) { del.textContent = "Confirm delete"; armed = setTimeout(() => { armed = null; del.textContent = "Delete"; }, 4000); return; } clearTimeout(armed); write(db => db.doc("supervisor/me/items/" + x.id).delete(), "Deleted"); };
+  return h("li", { class: "mine" + (x.done ? " is-done" : "") + (isRem ? " is-rem" : "") + (isMeet ? " is-meet" : "") },
+    tick,
+    h("div", { style: "min-width:0;flex:1" },
+      h("div", { class: "mine-title", text: x.title }),
+      h("div", { class: "t-sub" }, h("span", { class: "chip " + (isRem ? "warn" : isMeet ? "" : "plain"), text: isRem ? "Reminder" : isMeet ? "Scheduled meeting" : "Task" }), h("span", { class: "mono", text: when }),
+        x.location ? h("span", { class: "who", text: x.location }) : null),
+      (x.notes || x.agenda) ? h("p", { class: "ref-note", text: x.notes || x.agenda }) : null),
+    h("div", { style: "display:grid;gap:6px;justify-items:end" },
+      x.link ? h("a", { class: "btn small", href: x.link, target: "_blank", rel: "noopener", text: "Join ↗" }) : null, del));
+}
+let mineEl = null;
+function minePage() {
+  if (mineEl) return mineEl;
+  const kind = h("select", { id: "nm2-kind", onchange: e => { mineEl.querySelector("#nm2-link-row").hidden = e.target.value !== "reminder"; } },
+    h("option", { value: "task", text: "Task (something to do)" }), h("option", { value: "reminder", text: "Reminder (a meeting or event to attend)" }));
+  const form = h("form", { class: "edit-box", onsubmit: async e => {
+      e.preventDefault();
+      const title = val("nm2-title").trim(), k = kind.value, date = val("nm2-date"), time = val("nm2-time");
+      let link = val("nm2-link").trim(); if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
+      if (!title) { say("Write what the task or reminder is."); return; }
+      if (k === "reminder" && !date) { say("A reminder needs a date (and usually a time)."); return; }
+      const ok = await write(db => db.collection("supervisor/me/items").add({ kind: k, title, date, time, link: k === "reminder" ? link : "", location: val("nm2-loc").trim(), notes: val("nm2-notes").trim(), done: false, doneAt: "", createdAt: Date.now() }),
+        k === "reminder" ? "Reminder added" : "Task added");
+      if (ok) ["nm2-title", "nm2-time", "nm2-link", "nm2-loc", "nm2-notes"].forEach(id => document.getElementById(id).value = "");
+    } },
+    h("h4", { text: "Add a task or reminder" }),
+    h("div", { class: "row" }, h("label", { class: "fieldlabel" }, "Type", kind),
+      h("label", { class: "fieldlabel" }, "Date", h("input", { id: "nm2-date", type: "date", value: todayStr() })),
+      h("label", { class: "fieldlabel" }, "Time (optional)", h("input", { id: "nm2-time", type: "time" }))),
+    h("label", { class: "fieldlabel" }, "What", h("input", { id: "nm2-title", maxlength: "300", placeholder: "e.g. Review Priya's chapter 3 · Attend faculty meeting · Send DC report" })),
+    h("div", { class: "row", id: "nm2-link-row", hidden: true },
+      h("label", { class: "fieldlabel" }, "Meeting link (optional)", h("input", { id: "nm2-link", type: "text", inputmode: "url", maxlength: "500", placeholder: "https://meet.google.com/…" })),
+      h("label", { class: "fieldlabel" }, "Room / place (optional)", h("input", { id: "nm2-loc", maxlength: "120", placeholder: "e.g. Senate Hall" }))),
+    h("label", { class: "fieldlabel" }, "Notes (optional)", h("input", { id: "nm2-notes", maxlength: "500" })),
+    h("div", null, h("button", { class: "btn", type: "submit", text: "Add" })));
+  mineEl = h("div", { class: "tabpane" },
+    h("section", { class: "panel sec-mine" },
+      h("div", { class: "panel-head" }, h("h3", { text: "My tasks & reminders" }), h("span", { class: "muted", id: "mine-count" })),
+      h("p", { class: "note", text: "Only you can see this list. Meetings you've scheduled with students are included automatically." }),
+      form, h("div", { id: "mine-list", class: "mine-groups" })));
+  return mineEl;
+}
+function refreshMine() {
+  const box = document.getElementById("mine-list"); if (!box) return;
+  const b = mineBuckets();
+  const group = (label, list, cls) => list.length ? [h("div", { class: "task-group mine-head " + (cls || ""), }, h("span", { text: label }), h("span", { class: "mono", text: String(list.length) })), h("ul", { class: "refs" }, list.map(mineItem))] : [];
+  const parts = [...group("Overdue", b.overdue, "bad"), ...group("Today", b.today, "warn"), ...group("Upcoming", b.upcoming), ...group("No date", b.nodate)];
+  if (b.done.length) parts.push(h("details", { class: "sub" }, h("summary", { text: plural(b.done.length, "completed item") }), h("ul", { class: "refs", style: "margin-top:8px" }, b.done.slice(0, 50).map(mineItem))));
+  box.replaceChildren(...(parts.length ? parts : [h("p", { class: "note", text: "Nothing yet. Add a task or reminder above." })]));
+  document.getElementById("mine-count").textContent = (b.today.length ? b.today.length + " today · " : "") + (b.upcoming.length + b.nodate.length) + " upcoming";
+}
+/** Group overview: what needs attention today. */
+function todayPanel() {
+  const b = mineBuckets(), list = [...b.overdue, ...b.today];
+  if (!list.length) return null;
+  return h("section", { class: "panel sec-mine today-box" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Today" }), h("button", { class: "linkish", type: "button", text: "Open my tasks & reminders →", onclick: () => select("__mine") })),
+    h("ul", { class: "refs" }, list.slice(0, 8).map(mineItem)));
+}
 let schedEl = null;
 function schedPage() {
   if (schedEl) { refreshPicker(); return schedEl; }
@@ -913,6 +1003,10 @@ let builtFor = null;
 function renderDetail(force) {
   if (!S.isOwner && S.sel === null && S.loaded >= NCOLL && S.students.length) S.sel = S.students[0].id;
   if (S.sel === null) { builtFor = null; renderOverview(); return; }
+  if (S.sel === "__mine") {
+    if (builtFor !== "__mine" || force) { document.getElementById("detail").replaceChildren(minePage()); builtFor = "__mine"; }
+    refreshMine(); return;
+  }
   if (S.sel === "__sched") {
     if (builtFor !== "__sched" || force) { document.getElementById("detail").replaceChildren(schedPage()); builtFor = "__sched"; }
     refreshSched(); return;
@@ -985,6 +1079,12 @@ export async function start(pageRole) {
       try { await navigator.clipboard.writeText(url); say("Sign-up link copied"); }
       catch (e) { const r = document.createRange(); r.selectNodeContents(document.getElementById("signupUrl")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); say("Press Ctrl+C to copy the selected link"); }
     };
+    db.collection("supervisor/me/items").onSnapshot(snap => {
+      S.mine = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+      const ae = document.activeElement;
+      const typing = mineEl && mineEl.contains(ae) && /INPUT|SELECT|TEXTAREA/.test(ae.tagName) && ae.type !== "checkbox";
+      if (!typing) renderAll();
+    }, () => {});
     db.collection("students").onSnapshot(snap => {
       S.students = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
       S.students.forEach(x => watchStudent(x.id)); unwatchMissing();
