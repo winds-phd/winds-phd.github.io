@@ -276,3 +276,20 @@ a.ref-title:hover { text-decoration: underline; }
 
 .email-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; }
 .email-row input { padding: 5px 8px; }
+
+.r-item.r-conf .nm { color: var(--conf-ink); }
+.r-item.r-conf[aria-current="true"] { border-color: var(--conf-ink); box-shadow: inset 3px 0 0 var(--conf-ink); background: var(--conf-bg); }
+.roster-sep { padding: 10px 12px 2px; }
+
+.pub-group { color: var(--pubs-ink); border-bottom-color: var(--pubs-line); }
+.pub-group.pub-rejected { color: var(--muted); }
+.btn.overleaf { background: #138a36; border-color: #138a36; color: #fff; text-decoration: none; }
+details.more { border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; }
+details.more .more-body { display: grid; gap: 10px; margin-top: 10px; }
+
+.pub-counters { display: flex; flex-wrap: wrap; gap: 8px; }
+.pc { display: grid; justify-items: center; min-width: 78px; padding: 6px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--pubs-line); }
+.pc b { font-family: var(--f-mono); font-size: 1.3rem; font-weight: 500; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.pc span { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 600; color: var(--muted); }
+.pc-draft b { color: var(--muted); } .pc-sub b { color: var(--warn); } .pc-acc b { color: var(--good); } .pc-rej b { color: var(--bad); }
+tr.stage-row td { background: var(--surface); color: var(--pubs-ink); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; padding: 8px 10px; }

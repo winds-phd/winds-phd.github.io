@@ -4,8 +4,26 @@ const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
 const STATUSES = ["Not started", "In progress", "Under review", "Blocked", "Done"];
 const STATUS_CLASS = { "Not started": "plain", "In progress": "", "Under review": "warn", "Blocked": "bad", "Done": "good" };
-const PSTATUS = ["Idea", "Drafting", "Internal review", "Submitted", "Under review", "Major revision", "Minor revision", "Accepted", "Published", "Rejected"];
-const PSTATUS_CLASS = { "Idea": "plain", "Drafting": "plain", "Internal review": "", "Submitted": "", "Under review": "warn", "Major revision": "warn", "Minor revision": "warn", "Accepted": "good", "Published": "good", "Rejected": "bad" };
+const PSTATUS = ["Currently writing", "Submitted", "Under review", "Revision", "Accepted", "Published", "Rejected"];
+const PSTATUS_CLASS = { "Currently writing": "plain", "Submitted": "", "Under review": "warn", "Revision": "warn", "Accepted": "good", "Published": "good", "Rejected": "bad" };
+// earlier versions used finer steps; show them under the new names
+const LEGACY_PSTATUS = { "Idea": "Currently writing", "Drafting": "Currently writing", "Internal review": "Currently writing", "Major revision": "Revision", "Minor revision": "Revision" };
+function stageOf(p) { const s = normStatus(p.status); return PSTAGES.findIndex(([, , t]) => t(s)); }
+function pubCounts(list) { const c = [0, 0, 0, 0]; list.forEach(p => { const i = stageOf(p); if (i >= 0) c[i]++; }); return { draft: c[0], submitted: c[1], accepted: c[2], rejected: c[3] }; }
+function pubCounters(list) {
+  const c = pubCounts(list);
+  return h("div", { class: "pub-counters" },
+    h("div", { class: "pc pc-draft" }, h("b", { text: c.draft }), h("span", { text: "Draft" })),
+    h("div", { class: "pc pc-sub" }, h("b", { text: c.submitted }), h("span", { text: "Submitted" })),
+    h("div", { class: "pc pc-acc" }, h("b", { text: c.accepted }), h("span", { text: "Accepted" })),
+    c.rejected ? h("div", { class: "pc pc-rej" }, h("b", { text: c.rejected }), h("span", { text: "Rejected" })) : null);
+}
+function normStatus(s) { return LEGACY_PSTATUS[s] || s || "Currently writing"; }
+const PSTAGES = [
+  ["writing", "Draft (currently writing)", s => s === "Currently writing"],
+  ["review", "Submitted / under review", s => ["Submitted", "Under review", "Revision"].includes(s)],
+  ["accepted", "Accepted / published", s => ["Accepted", "Published"].includes(s)],
+  ["rejected", "Rejected", s => s === "Rejected"]];
 const PTYPES = ["Journal article", "Conference paper", "Review article", "Book chapter", "Patent", "Preprint"];
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
@@ -26,6 +44,7 @@ function h(tag, props, ...kids) {
   }
   for (const c of kids.flat()) { if (c == null || c === false) continue; el.append(c instanceof Node ? c : document.createTextNode(String(c))); }
   if (val !== undefined) el.value = val;
+  if (tag === "form") el.noValidate = true;
   return el;
 }
 /* ---------- dates & task metrics ---------- */
@@ -90,11 +109,15 @@ function renderStats() {
   const avg = avgDays(all);
   document.getElementById("stats").replaceChildren(
     stat(S.students.length, "Students"), stat(open.length, "Open tasks"), stat(od.length, "Overdue", od.length),
-    stat(done.length, "Completed"), stat(S.papers.filter(p => pStatus(p) === "Published").length, "Papers published"), stat(S.papers.filter(inReview).length, "In review"), stat(avg == null ? "—" : avg + "d", "Avg. time to finish"), stat(stale.length, "Not met in 30 days", stale.length));
+    stat(done.length, "Completed"), stat(pubCounts(S.papers).draft, "Draft papers"), stat(pubCounts(S.papers).submitted, "Submitted"), stat(pubCounts(S.papers).accepted, "Accepted"), stat(avg == null ? "—" : avg + "d", "Avg. time to finish"), stat(stale.length, "Not met in 30 days", stale.length));
 }
 function renderRoster() {
   const items = [h("button", { class: "r-item", type: "button", "aria-current": S.sel === null ? "true" : "false", onclick: () => select(null) },
-    h("span", { class: "nm", text: "Group overview" }), h("span", { class: "meta", text: "All tasks and recent meetings" }))];
+    h("span", { class: "nm", text: "Group overview" }), h("span", { class: "meta", text: "All tasks and recent meetings" })),
+    h("button", { class: "r-item r-conf", type: "button", "aria-current": S.sel === "__confs" ? "true" : "false", onclick: () => select("__confs") },
+      h("span", { class: "nm", text: "Upcoming conferences" }),
+      h("span", { class: "meta", text: (() => { const n = (S.confs || []).filter(c => !c.deadline || diff(todayStr(), c.deadline) >= 0).length; return n ? plural(n, "upcoming deadline") : "Add and view conference deadlines"; })() })),
+    h("div", { class: "roster-sep label", text: "Students" })];
   for (const s of [...S.students].sort((a, b) => a.name.localeCompare(b.name))) {
     const l = lastMeeting(s.id), mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), od = open.filter(isOverdue).length;
     items.push(h("button", { class: "r-item", type: "button", "aria-current": S.sel === s.id ? "true" : "false", onclick: () => select(s.id) },
@@ -146,35 +169,37 @@ function renderOverview() {
       h("div", { class: "m-top" }, h("button", { class: "linkish", type: "button", text: studentName(m.studentId), onclick: () => select(m.studentId) }), h("span", { class: "m-date", text: fmtD(m.date) })),
       h("p", { class: "note", text: plural((m.updates || []).length, "task update") + " · " + plural((m.newTasks || []).length, "new task") + (m.notes ? " · " + (m.notes.length > 140 ? m.notes.slice(0, 140) + "…" : m.notes) : "") }))))
       : h("p", { class: "note", text: "No meetings logged yet. Pick a student on the left to log one." }));
-  const pp = [...S.papers].sort((a, b) => (pActive(b) - pActive(a)) || PSTATUS.indexOf(pStatus(b)) - PSTATUS.indexOf(pStatus(a)));
+  const pp = [...S.papers].sort((a, b) => stageOf(a) - stageOf(b) || studentName(a.studentId).localeCompare(studentName(b.studentId)));
   const papPanel = h("section", { class: "panel sec-pubs" },
-    h("div", { class: "panel-head" }, h("h3", { text: "Publications pipeline" }), h("span", { class: "muted", text: S.papers.filter(p => pStatus(p) === "Published").length + " published · " + S.papers.filter(inReview).length + " in review" })),
+    h("div", { class: "panel-head" }, h("h3", { text: "Publications" }), pubCounters(S.papers)),
     pp.length ? h("div", { class: "table-wrap" }, h("table", null,
-      h("thead", null, h("tr", null, ["Student", "Paper", "Venue", "Indexing", "Status", "Review time", "Draft"].map(x => h("th", { text: x })))),
-      h("tbody", null, pp.map(p => { const m = pMetrics(p); return h("tr", null,
+      h("thead", null, h("tr", null, ["Student", "Paper", "Venue", "Status", "Review time", "Overleaf"].map(x => h("th", { text: x })))),
+      h("tbody", null, pp.flatMap((p, i) => { const m = pMetrics(p);
+        const head = (i === 0 || stageOf(pp[i - 1]) !== stageOf(p)) ? [h("tr", { class: "stage-row" }, h("td", { colspan: "6", text: PSTAGES[stageOf(p)][1] + " · " + pp.filter(x => stageOf(x) === stageOf(p)).length }))] : [];
+        return [...head, h("tr", null,
         h("td", null, h("button", { class: "linkish", type: "button", text: studentName(p.studentId), onclick: () => { select(p.studentId); focusPaper(p.id); } })),
-        h("td", null, h("div", { text: p.title }), p.summary && p.summary.oneLine ? h("div", { class: "who", text: p.summary.oneLine }) : null),
-        h("td", { text: p.venue || "—" }), h("td", { text: (p.indexing || "—") + (p.quartile && p.quartile !== "—" ? " · " + p.quartile : "") }),
+        h("td", { text: p.title }),
+        h("td", { text: p.venue || "—" }),
         h("td", null, pChip(pStatus(p))), h("td", { class: "num", text: m.review == null ? "—" : m.review + "d" }),
-        h("td", null, p.overleaf ? h("a", { class: "ext", href: p.overleaf, target: "_blank", rel: "noopener", text: "Overleaf ↗" }) : h("span", { class: "muted", text: "—" }))); }))))
+        h("td", null, p.overleaf ? h("a", { class: "ext", href: p.overleaf, target: "_blank", rel: "noopener", text: "Overleaf ↗" }) : h("span", { class: "muted", text: "—" })))]; }))))
       : h("p", { class: "note", text: "Papers added on a student's Publications tab appear here with their status and review time." }));
-  d.replaceChildren(openPanel, confPanelEl(), papPanel, donePanel, meetPanel);
-  refreshConfs();
+  d.replaceChildren(openPanel, papPanel, donePanel, meetPanel);
 }
 
 /* ---------- publications ---------- */
 function P(kind, item) { return "students/" + item.studentId + "/" + kind + "/" + item.id; }
 function C(kind, sid) { return "students/" + sid + "/" + kind; }
 function papersOf(sid) { return S.papers.filter(p => !sid || p.studentId === sid); }
-function pStatus(p) { return p.status || "Idea"; }
+function pStatus(p) { return normStatus(p.status); }
 function pActive(p) { return !["Published", "Rejected"].includes(pStatus(p)); }
-function inReview(p) { return ["Submitted", "Under review", "Major revision", "Minor revision"].includes(pStatus(p)); }
-function pChip(s) { return h("span", { class: "chip " + (PSTATUS_CLASS[s] ?? ""), text: s }); }
+function inReview(p) { return ["Submitted", "Under review", "Revision"].includes(pStatus(p)); }
+function pLabel(s) { return s === "Currently writing" ? "Draft (currently writing)" : s; }
+function pChip(s) { s = normStatus(s); return h("span", { class: "chip " + (PSTATUS_CLASS[s] ?? ""), text: s === "Currently writing" ? "Draft" : s }); }
 function pMetrics(p) {
   const today = todayStr(), st = pStatus(p);
   const last = (p.history || []).map(x => x.date).filter(Boolean).sort().pop() || p.statusSince || today;
   const inStatus = Math.max(0, diff(last, today));
-  let review = null, reviewLabel = "Not submitted yet";
+  let review = null, reviewLabel = st === "Currently writing" ? "Writing for " + plural(Math.max(0, diff(p.statusSince || last || startOfPaper(p), today)), "day") : "Not submitted yet";
   if (p.submittedOn) {
     const end = p.acceptedOn || (st === "Rejected" ? p.decisionOn : null) || today;
     review = Math.max(0, diff(p.submittedOn, end));
@@ -183,10 +208,11 @@ function pMetrics(p) {
   const firstDecision = p.submittedOn && p.firstDecisionOn ? Math.max(0, diff(p.submittedOn, p.firstDecisionOn)) : null;
   return { inStatus, review, reviewLabel, firstDecision, last };
 }
+function startOfPaper(p) { return p.createdAt ? new Date(p.createdAt).toISOString().slice(0, 10) : todayStr(); }
 function stampDates(p, status, date) {
   const patch = {};
   if (status === "Submitted" && !p.submittedOn) patch.submittedOn = date;
-  if (["Major revision", "Minor revision", "Accepted", "Rejected"].includes(status) && p.submittedOn && !p.firstDecisionOn) patch.firstDecisionOn = date;
+  if (["Revision", "Accepted", "Rejected"].includes(status) && p.submittedOn && !p.firstDecisionOn) patch.firstDecisionOn = date;
   if (status === "Accepted" && !p.acceptedOn) patch.acceptedOn = date;
   if (status === "Published") { if (!p.publishedOn) patch.publishedOn = date; if (!p.acceptedOn && p.submittedOn) patch.acceptedOn = date; }
   if (status === "Rejected") patch.decisionOn = date;
@@ -203,54 +229,32 @@ function paperCard(p) {
       h("div", { style: "min-width:0" },
         h("div", { class: "t-title", text: p.title }),
         h("div", { class: "t-sub" }, pChip(st), h("span", { class: "chip plain", text: p.type || "Journal article" }),
-          p.indexing && p.indexing !== "Not yet known" ? h("span", { class: "chip", text: p.indexing }) : null,
-          p.quartile && p.quartile !== "—" ? h("span", { class: "chip", text: p.quartile }) : null,
-          p.venue ? h("span", { class: "p-venue", text: p.venue }) : null,
-          p.overleaf ? h("span", { class: "chip plain", text: "Overleaf linked" }) : null),
-        sm.oneLine ? h("div", { class: "t-sub", text: sm.oneLine }) : null,
+          p.venue ? h("span", { class: "p-venue", text: (st === "Currently writing" ? "Target: " : "") + p.venue }) : h("span", { class: "muted", text: st === "Currently writing" ? "Target venue not set" : "Venue not set" }),
+          p.authors ? h("span", { class: "who", text: p.authors }) : null),
         latestFeedback(p)),
       h("div", { class: "t-right" },
         h("span", { class: "days" + (inReview(p) && m.review > 180 ? " bad" : p.acceptedOn ? " good" : ""), text: m.reviewLabel }),
-        h("span", { class: "who", text: plural(m.inStatus, "day") + " in current status" }))));
-  const hasSummary = sm.problem || sm.method || sm.findings || sm.contribution || (sm.keywords || []).length;
-  const summaryEl = hasSummary || sm.oneLine ? h("div", { class: "summary" },
-      sm.oneLine ? h("div", { class: "s-block s-wide" }, h("div", { class: "label", text: "In one line" }), h("p", { class: "oneline", text: sm.oneLine })) : null,
-      sm.problem ? h("div", { class: "s-block" }, h("div", { class: "label", text: "Research problem" }), h("p", { text: sm.problem })) : null,
-      sm.method ? h("div", { class: "s-block" }, h("div", { class: "label", text: "Methodology" }), h("p", { text: sm.method })) : null,
-      sm.findings ? h("div", { class: "s-block" }, h("div", { class: "label", text: "Key findings" }), h("p", { text: sm.findings })) : null,
-      sm.contribution ? h("div", { class: "s-block" }, h("div", { class: "label", text: "Contribution / novelty" }), h("p", { text: sm.contribution })) : null,
-      (sm.keywords || []).length ? h("div", { class: "s-block s-wide" }, h("div", { class: "label", text: "Keywords" }), h("div", { class: "kw" }, sm.keywords.map(k => h("span", { class: "chip plain", text: k })))) : null)
-    : h("p", { class: "note", text: "No research summary yet. Fill it in under \"Edit paper details and summary\" below." });
-  const href = doiHref(p.doi);
-  const facts = h("dl", { class: "facts" },
-    [["Type", p.type || "Journal article"], ["Venue", p.venue || "—"], ["Indexing", p.indexing || "—"], ["Quartile / IF", (p.quartile && p.quartile !== "—" ? p.quartile : "—") + (p.impactFactor ? " · IF " + p.impactFactor : "")],
-     ["Submitted", fmtD(p.submittedOn)], ["First decision", p.firstDecisionOn ? fmtD(p.firstDecisionOn) + (m.firstDecision != null ? " (" + m.firstDecision + "d)" : "") : "—"],
-     ["Accepted", fmtD(p.acceptedOn)], ["Published", fmtD(p.publishedOn)], ["Review time", m.review == null ? "—" : plural(m.review, "day")], ["Status updates", String((p.history || []).length)]]
-      .map(([k, v]) => h("div", null, h("dt", { text: k }), h("dd", { text: v }))));
+        h("span", { class: "who", text: plural(m.inStatus, "day") + " in current status" }),
+        p.overleaf ? h("a", { class: "btn small overleaf", href: p.overleaf, target: "_blank", rel: "noopener", text: "Overleaf ↗", onclick: e => e.stopPropagation() })
+          : (st === "Currently writing" ? h("span", { class: "chip warn", text: "No Overleaf link" }) : null))));
   const hist = (p.history || []).map((x, i) => [x, i]).sort((a, b) => (b[0].date || "").localeCompare(a[0].date || "") || b[1] - a[1]).map(p => p[0]);
   const body = h("div", { class: "t-body" },
     h("div", { class: "linkbtns" },
-      p.overleaf ? h("a", { class: "btn small", href: p.overleaf, target: "_blank", rel: "noopener", text: "Open working draft in Overleaf ↗" })
-        : h("span", { class: "note", text: "No Overleaf link yet. Add it under \"Edit paper details\"." }),
-      href ? h("a", { class: "btn ghost small", href, target: "_blank", rel: "noopener", text: "Published version ↗" }) : null),
-    p.authors ? h("p", { class: "note", text: "Authors: " + p.authors }) : null,
-    summaryEl,
-    p.abstract ? h("details", { class: "sub" }, h("summary", { text: "Abstract" }), h("p", { class: "abstract", text: p.abstract })) : null,
-    facts,
-    href ? h("p", { class: "note" }, "DOI / link: ", h("a", { class: "ext", href, target: "_blank", rel: "noopener", text: p.doi })) : null,
-    p.notes ? h("div", null, h("div", { class: "label", text: "Supervisor notes" }), h("p", { class: "t-details", text: p.notes })) : null,
+      p.overleaf ? h("a", { class: "btn small overleaf", href: p.overleaf, target: "_blank", rel: "noopener", text: "Open draft in Overleaf ↗" })
+        : h("span", { class: "note", text: "No Overleaf link yet. Add it under \"Edit paper details\"." })),
+    h("p", { class: "note", text: [p.type || "Journal article", p.venue ? (pStatus(p) === "Currently writing" ? "Target venue: " : "Venue: ") + p.venue : null, p.authors ? "Authors: " + p.authors : null].filter(Boolean).join("  ·  ") }),
     h("div", { style: "display:grid;gap:8px" }, h("div", { class: "label", text: "Status timeline" }),
       hist.length ? h("ol", { class: "hist" }, hist.map(x => h("li", null,
-        h("div", { class: "h-top" }, h("span", { class: "h-date", text: fmtD(x.date) }), pChip(x.status || "Idea"),
+        h("div", { class: "h-top" }, h("span", { class: "h-date", text: fmtD(x.date) }), pChip(x.status),
           h("span", { class: "who", text: x.via === "meeting" ? "Meeting update" : x.via === "added" ? "Added" : "Direct update" }), h("span", { class: "who", text: x.byName ? "by " + x.byName : "" })),
         remarkEl(x)))) : h("p", { class: "note", text: "No status changes yet." })),
     S.canWrite ? paperStatusForm(p) : null,
-    S.canWrite ? h("details", { class: "sub" }, h("summary", { text: "Edit paper details and summary" }), paperEditForm(p)) : null);
+    S.canWrite ? h("details", { class: "sub" }, h("summary", { text: "Edit paper details" }), paperEditForm(p)) : null);
   card.append(body);
   return card;
 }
 function paperStatusForm(p) {
-  const id = p.id, sel = h("select", { id: "pst-" + id }, PSTATUS.map(x => h("option", { value: x, text: x })));
+  const id = p.id, sel = h("select", { id: "pst-" + id }, PSTATUS.map(x => h("option", { value: x, text: pLabel(x) })));
   sel.value = pStatus(p);
   return h("form", { class: "edit-box", onsubmit: async e => {
       e.preventDefault();
@@ -268,33 +272,17 @@ function paperFields(prefix, p) {
   p = p || {}; const sm = p.summary || {};
   const sel = (id, opts, v) => { const s = h("select", { id }, opts.map(x => h("option", { value: x, text: x }))); s.value = v || opts[0]; return s; };
   return [
-    h("label", { class: "fieldlabel" }, "Title", h("input", { id: prefix + "title", maxlength: "400", value: p.title || "", required: true })),
-    h("label", { class: "fieldlabel" }, "Authors (in order)", h("input", { id: prefix + "authors", maxlength: "500", value: p.authors || "", placeholder: "P. Sharma, A. Kumar, …" })),
+    h("label", { class: "fieldlabel" }, "Title", h("input", { id: prefix + "title", maxlength: "400", value: p.title || "" })),
+    h("label", { class: "fieldlabel" }, "Overleaf link (the working draft)", h("input", { id: prefix + "overleaf", type: "text", inputmode: "url", autocomplete: "off", maxlength: "300", value: p.overleaf || "", placeholder: "https://www.overleaf.com/project/…  (Share → link sharing)" })),
     h("div", { class: "row" },
-      h("label", { class: "fieldlabel" }, "Type", sel(prefix + "type", PTYPES, p.type)),
-      h("label", { class: "fieldlabel" }, "Journal / conference", h("input", { id: prefix + "venue", maxlength: "300", value: p.venue || "" }))),
-    h("div", { class: "row" },
-      h("label", { class: "fieldlabel" }, "Indexing", sel(prefix + "indexing", INDEXING, p.indexing || "Not yet known")),
-      h("label", { class: "fieldlabel" }, "Quartile", sel(prefix + "quartile", QUARTILES, p.quartile)),
-      h("label", { class: "fieldlabel" }, "Impact factor", h("input", { id: prefix + "if", maxlength: "20", value: p.impactFactor || "", placeholder: "e.g. 4.2" }))),
-    h("div", { class: "row" },
-      h("label", { class: "fieldlabel" }, "Overleaf project link", h("input", { id: prefix + "overleaf", type: "url", maxlength: "300", value: p.overleaf || "", placeholder: "https://www.overleaf.com/project/…" })),
-      h("label", { class: "fieldlabel" }, "DOI or published link", h("input", { id: prefix + "doi", maxlength: "300", value: p.doi || "", placeholder: "10.xxxx/xxxxx" }))),
-    h("label", { class: "fieldlabel" }, "Abstract", h("textarea", { id: prefix + "abstract", rows: "5", value: p.abstract || "", placeholder: "Paste the abstract" })),
-    h("label", { class: "fieldlabel" }, "In one line", h("input", { id: prefix + "oneLine", maxlength: "300", value: sm.oneLine || "" })),
-    h("label", { class: "fieldlabel" }, "Research problem", h("textarea", { id: prefix + "problem", rows: "2", value: sm.problem || "" })),
-    h("label", { class: "fieldlabel" }, "Methodology", h("textarea", { id: prefix + "method", rows: "2", value: sm.method || "" })),
-    h("label", { class: "fieldlabel" }, "Key findings", h("textarea", { id: prefix + "findings", rows: "2", value: sm.findings || "" })),
-    h("label", { class: "fieldlabel" }, "Contribution / novelty", h("textarea", { id: prefix + "contribution", rows: "2", value: sm.contribution || "" })),
-    h("label", { class: "fieldlabel" }, "Keywords (comma separated)", h("input", { id: prefix + "keywords", maxlength: "300", value: (sm.keywords || []).join(", ") })),
-    h("label", { class: "fieldlabel" }, "Supervisor notes", h("textarea", { id: prefix + "notes", rows: "2", value: p.notes || "", placeholder: "Target journals, author contributions, pending experiments…" }))];
+      h("label", { class: "fieldlabel" }, "Venue: journal or conference (target, if still writing)", h("input", { id: prefix + "venue", maxlength: "300", value: p.venue || "", placeholder: "e.g. IEEE Transactions on Power Systems" })),
+      h("label", { class: "fieldlabel" }, "Type", sel(prefix + "type", PTYPES, p.type))),
+    h("label", { class: "fieldlabel" }, "Authors (in order)", h("input", { id: prefix + "authors", maxlength: "500", value: p.authors || "", placeholder: "P. Sharma, A. Kalita, …" })),
+];
 }
 function readPaperFields(prefix) {
-  return { title: val(prefix + "title").trim(), authors: val(prefix + "authors").trim(), type: val(prefix + "type"), venue: val(prefix + "venue").trim(),
-    indexing: val(prefix + "indexing"), quartile: val(prefix + "quartile"), impactFactor: val(prefix + "if").trim(), doi: val(prefix + "doi").trim(), overleaf: cleanUrl(val(prefix + "overleaf")),
-    abstract: val(prefix + "abstract").trim(), notes: val(prefix + "notes").trim(),
-    summary: { oneLine: val(prefix + "oneLine").trim(), problem: val(prefix + "problem").trim(), method: val(prefix + "method").trim(), findings: val(prefix + "findings").trim(),
-      contribution: val(prefix + "contribution").trim(), keywords: val(prefix + "keywords").split(",").map(x => x.trim()).filter(Boolean).slice(0, 12) } };
+  return { title: val(prefix + "title").trim(), authors: val(prefix + "authors").trim(), type: val(prefix + "type"),
+    venue: val(prefix + "venue").trim(), overleaf: cleanUrl(val(prefix + "overleaf")) };
 }
 function paperEditForm(p) {
   const prefix = "pe-" + p.id + "-";
@@ -313,7 +301,7 @@ function delPaperBtn(p) {
 }
 function paperAddForm(s) {
   const prefix = "np-";
-  const sel = h("select", { id: "np-status" }, PSTATUS.map(x => h("option", { value: x, text: x }))); sel.value = "Drafting";
+  const sel = h("select", { id: "np-status" }, PSTATUS.map(x => h("option", { value: x, text: pLabel(x) }))); sel.value = "Currently writing";
   return h("form", { class: "edit-box", hidden: !S.canWrite, onsubmit: async e => {
       e.preventDefault(); const d = readPaperFields(prefix); if (!d.title) { say("The paper needs a title."); return; }
       const status = sel.value, date = val("np-date") || todayStr();
@@ -321,10 +309,11 @@ function paperAddForm(s) {
         history: [{ date, status, remark: "Paper added", via: "added", by: S.uid, byName: S.myName, byRole: S.myRole }] };
       Object.assign(base, stampDates({}, status, date));
           const ok = await write(db => db.collection(C("papers", s.id)).add(base), "Paper added");
-      if (ok) { e.target.reset(); document.getElementById("np-date").value = todayStr(); sel.value = "Drafting"; e.target.closest("details").open = false; }
+      if (ok) { e.target.reset(); document.getElementById("np-date").value = todayStr(); sel.value = "Currently writing"; e.target.closest("details").open = false; }
     } },
+    h("div", { class: "row" }, h("label", { class: "fieldlabel" }, "Where is this paper now?", sel),
+      h("label", { class: "fieldlabel" }, "Since (started / submitted / accepted on)", h("input", { type: "date", id: "np-date", value: todayStr() }))),
     paperFields(prefix, null),
-    h("div", { class: "row" }, h("label", { class: "fieldlabel" }, "Current status", sel), h("label", { class: "fieldlabel" }, "Status as of", h("input", { type: "date", id: "np-date", value: todayStr() }))),
     h("div", null, h("button", { class: "btn", type: "submit", text: "Add paper" })));
 }
 
@@ -402,9 +391,9 @@ function buildStudent(s) {
     h("ul", { class: "meetings", id: "meet-list" }));
 
   const papersPanel = h("section", { class: "panel" },
-    h("div", { class: "panel-head" }, h("h3", { text: "Publications" }), h("span", { class: "muted", id: "paper-count" })),
+    h("div", { class: "panel-head" }, h("h3", { text: "Publications" }), h("div", { id: "paper-count" })),
     h("div", { class: "tasks", id: "paper-list" }),
-    S.canWrite ? h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper" }), h("div", { style: "margin-top:10px" }, paperAddForm(s))) : null);
+    S.canWrite ? h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper: currently writing, submitted or accepted" }), h("div", { style: "margin-top:10px" }, paperAddForm(s))) : null);
 
   const refForm = h("form", { class: "edit-box", hidden: !S.canWrite, onsubmit: async e => {
       e.preventDefault(); const title = val("nr-title").trim(); let link = val("nr-link").trim();
@@ -428,13 +417,14 @@ function buildStudent(s) {
   const panes = {
     tasks: h("div", { class: "tabpane", "data-pane": "tasks" }, tasks),
     refs: h("div", { class: "tabpane", "data-pane": "refs" }, refsPanel),
-    confs: h("div", { class: "tabpane", "data-pane": "confs" }, confPanelEl()),
+    confs: S.isOwner ? null : h("div", { class: "tabpane", "data-pane": "confs" }, confPanelEl()),
     papers: h("div", { class: "tabpane", "data-pane": "papers" }, papersPanel),
     meetings: h("div", { class: "tabpane", "data-pane": "meetings" }, h("div", { class: "cols" }, meetPanel, logPanel)) };
   const tabBtn = (k, l) => h("button", { type: "button", role: "tab", "data-tab": k, class: "tab-" + k, "aria-selected": S.tab === k ? "true" : "false",
     onclick: () => { S.tab = k; showTab(); } }, l, h("span", { class: "n", id: "tabn-" + k }));
-  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Paper details"), tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"));
-  d.replaceChildren(head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings);
+  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Paper details"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"));
+  if (S.isOwner && S.tab === "confs") S.tab = "tasks";
+  d.replaceChildren(...[head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings].filter(Boolean));
   showTab();
   updSig = null; pupdSig = null;
 }
@@ -590,11 +580,11 @@ function refreshPaperRows(s) {
   if (!act.length) { list.replaceChildren(h("p", { class: "note", text: "No papers in progress. Add papers in the Publications tab." })); return; }
   list.replaceChildren(...act.map(p => {
     const k = keep[p.id], row = h("div", { class: "upd", "data-pid": p.id }), mark = () => row.dataset.touched = "1";
-    const sel = h("select", { id: "mps-" + p.id, "aria-label": "Status for " + p.title, onchange: mark }, PSTATUS.map(x => h("option", { value: x, text: x })));
+    const sel = h("select", { id: "mps-" + p.id, "aria-label": "Status for " + p.title, onchange: mark }, PSTATUS.map(x => h("option", { value: x, text: pLabel(x) })));
     sel.value = k && k.touched ? k.s : pStatus(p);
     if (k && k.touched) row.dataset.touched = "1";
     row.append(
-      h("div", { class: "m-top" }, h("span", { class: "u-title", text: p.title }), h("span", { class: "who", text: pStatus(p) + " · " + pMetrics(p).reviewLabel })),
+      h("div", { class: "m-top" }, h("span", { class: "u-title", text: p.title }), h("span", { class: "who", text: (pStatus(p) === "Currently writing" ? "Draft" : pStatus(p)) + " · " + pMetrics(p).reviewLabel })),
       h("div", { class: "u-grid" }, sel, h("input", { id: "mpr-" + p.id, placeholder: "Remark, e.g. revision plan agreed", maxlength: "500", value: k ? k.r : "", oninput: mark, "aria-label": "Remark for " + p.title })));
     return row;
   }));
@@ -749,7 +739,7 @@ function refreshStudent(s) {
   document.getElementById("s-figs").replaceChildren(
     stat(open.length, "Open tasks"), stat(open.filter(isOverdue).length, "Overdue", open.filter(isOverdue).length), stat(done.length, "Completed"),
     stat(avg == null ? "—" : avg + "d", "Avg. days to finish"), stat(done.length ? (done.length - late) + "/" + done.length : "—", "Finished on time"),
-    stat(papersOf(s.id).filter(p => pStatus(p) === "Published").length, "Papers published"), stat(papersOf(s.id).filter(inReview).length, "Papers in review"),
+    stat(pubCounts(papersOf(s.id)).draft, "Draft papers"), stat(pubCounts(papersOf(s.id)).submitted, "Submitted papers"), stat(pubCounts(papersOf(s.id)).accepted, "Accepted papers"),
     stat(ms.length, "Meetings"), stat(l ? diff(l, todayStr()) + "d" : "—", "Since last meeting"), stat(nextM ? fmtD(nextM) : "—", "Next meeting"));
   document.querySelectorAll("#task-filters button").forEach(b => b.setAttribute("aria-pressed", b.dataset.f === S.filter ? "true" : "false"));
   open.sort(sortTasks); done.sort((a, b) => (b.doneAt || "").localeCompare(a.doneAt || ""));
@@ -767,9 +757,19 @@ function refreshStudent(s) {
   const pp = papersOf(s.id).sort((a, b) => (pActive(b) - pActive(a)) || PSTATUS.indexOf(pStatus(b)) - PSTATUS.indexOf(pStatus(a)) || (b.createdAt || 0) - (a.createdAt || 0));
   const pl = document.getElementById("paper-list");
   const pEditing = pl.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
-  if (!pEditing && !S.dirtyPapers.size) pl.replaceChildren(...(pp.length ? pp.map(paperCard) : [h("p", { class: "note", text: "No papers yet. Add drafts, submissions and published papers to track their review time and keep a summary of each." })]));
+  if (!pEditing && !S.dirtyPapers.size) {
+    if (!pp.length) pl.replaceChildren(h("p", { class: "note", text: "No papers yet. Add the paper you're writing now with its Overleaf link, and any submitted or accepted papers with their venue." }));
+    else pl.replaceChildren(...PSTAGES.flatMap(([k, label, test]) => {
+      const g = pp.filter(p => test(pStatus(p)));
+      if (!g.length && k === "rejected") return [];
+      return [h("div", { class: "task-group pub-group pub-" + k }, h("span", { text: label }), h("span", { class: "mono", text: String(g.length) })),
+        ...(g.length ? g.map(paperCard) : [h("p", { class: "note", text: k === "writing" ? "Nothing being written right now." : k === "review" ? "Nothing under review." : "None yet." })])];
+    }));
+  }
   const pub = pp.filter(p => pStatus(p) === "Published").length, rev = pp.filter(inReview).length;
-  document.getElementById("paper-count").textContent = pub + " published · " + rev + " in review · " + pp.length + " total";
+  const writing = pp.filter(p => pStatus(p) === "Currently writing").length, acc = pp.filter(p => ["Accepted", "Published"].includes(pStatus(p))).length;
+  document.getElementById("paper-count").replaceChildren(pubCounters(pp));
+  const addBox = document.getElementById("paper-add"); if (addBox && !pp.length) addBox.open = true;
   document.getElementById("tabn-tasks").textContent = open.length;
   document.getElementById("tabn-papers").textContent = pp.length;
   document.getElementById("tabn-meetings").textContent = ms.length;
@@ -800,6 +800,10 @@ let builtFor = null;
 function renderDetail(force) {
   if (!S.isOwner && S.sel === null && S.loaded >= NCOLL && S.students.length) S.sel = S.students[0].id;
   if (S.sel === null) { builtFor = null; renderOverview(); return; }
+  if (S.sel === "__confs") {
+    if (builtFor !== "__confs" || force) { document.getElementById("detail").replaceChildren(confPanelEl()); builtFor = "__confs"; }
+    refreshConfs(); return;
+  }
   const s = S.students.find(x => x.id === S.sel);
   if (!s) { if (S.loaded >= NCOLL) { S.sel = null; builtFor = null; renderOverview(); } return; }
   if (builtFor !== s.id || force) { buildStudent(s); builtFor = s.id; }
@@ -843,6 +847,7 @@ export async function start(pageRole) {
     const list = document.getElementById("conf-list");
     const typing = confPanel && confPanel.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
     if (list && !typing) refreshConfs();
+    if (S.isOwner) renderRoster();
   }, () => {});
   if (sup) {
     const jp = document.getElementById("joinPanel"); jp.hidden = false;
