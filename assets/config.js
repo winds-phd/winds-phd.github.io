@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-//  PhD Supervision Log — configuration (the only file to edit)
+//  WiNDS Lab Research Tracking — configuration (the only file to edit)
 // ─────────────────────────────────────────────────────────────
 
 // Paste the Web app URL from your Google Apps Script deployment (README step 3).
@@ -7,4 +7,4 @@
 export const API_URL = "https://script.google.com/macros/s/AKfycbxTNn-RCoAu6imVmzcQgYi6-koE_si7V20BLUrS-ehZDcC0T5g3JcUOhQBj1mDnuoA/exec";
 
 // Name shown at the top of the sign-in pages.
-export const GROUP_NAME = "PhD Supervision Log";
+export const GROUP_NAME = "WiNDS Lab Research Tracking";

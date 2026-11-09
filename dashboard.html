@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Supervisor Dashboard · PhD Supervision Log</title>
+<title>Supervisor Dashboard · WiNDS Lab Research Tracking</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -15,7 +15,7 @@
   <header class="top">
     <div>
       <div class="label" id="page-eyebrow">Research group · Supervisor</div>
-      <h1>PhD Supervision Log</h1>
+      <h1>WiNDS Lab Research Tracking</h1>
       <p id="page-sub">Every student's tasks, papers and meetings. Each student sees only their own.</p>
     </div>
     <div class="stats" id="stats"></div>
@@ -24,11 +24,11 @@
     <aside class="roster">
       <div class="roster-head"><span class="label">Dashboard</span></div>
       <div class="roster-list" id="roster"></div>
-      <section class="panel" id="joinPanel" hidden>
-        <div class="label">Class join code</div>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b class="mono" id="joinShow" style="font-size:1.3rem;letter-spacing:0.12em">—</b><button class="btn ghost small" type="button" id="joinEditBtn">Change</button></div>
-        <form id="joinForm" hidden><label class="fieldlabel">New code (4–12 letters or digits)<input id="joinNew" maxlength="12" autocomplete="off"></label><div class="row"><button class="btn small" type="submit">Save code</button><button class="btn ghost small" type="button" id="joinCancel">Cancel</button></div></form>
-        <p class="note">Students open <b>register.html</b> on this site, enter this code, their admission number and a secret code of their choice. They then sign in on the login page.</p>
+      <section class="panel" id="joinPanel">
+        <div class="label">Student sign-up link</div>
+        <p class="note">Send students this page. They create their own account with their admission number and a password.</p>
+        <code id="signupUrl" class="signup-url"></code>
+        <button class="btn ghost small" type="button" id="copySignup">Copy link</button>
       </section>
     </aside>
     <main class="detail" id="detail"></main>

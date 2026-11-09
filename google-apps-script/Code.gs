@@ -1,7 +1,7 @@
 /**
- * PhD Supervision Log — backend for the GitHub Pages site.
+ * WiNDS Lab Research Tracking — backend for the GitHub Pages site.
  *
- * Stores everything in a Google Sheet in YOUR Google Drive ("PhD Supervision Log — data").
+ * Stores everything in a Google Sheet in YOUR Google Drive ("WiNDS Lab Research Tracking — data").
  * The website (on GitHub Pages) talks to this script; students never need Google accounts.
  *
  * One-time setup (details in README.md):
@@ -10,7 +10,7 @@
  *   3. Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone → copy the URL.
  *   4. Put that URL in assets/config.js on the website.
  *
- * Forgot a password or secret code? Use "Forgot?" on the sign-in page: a reset link is emailed (data is kept).
+ * Forgot a password? Use "Forgot?" on the sign-in page: a reset link is emailed (data is kept).
  * Last resort for the supervisor: run  newSetupKey  and do the supervisor sign-up again on the site.
  */
 
@@ -29,7 +29,7 @@ function init() {
   let ss;
   const id = props.getProperty("SHEET_ID");
   if (id) ss = SpreadsheetApp.openById(id);
-  else { ss = SpreadsheetApp.create("PhD Supervision Log — data"); props.setProperty("SHEET_ID", ss.getId()); }
+  else { ss = SpreadsheetApp.create("WiNDS Lab Research Tracking — data"); props.setProperty("SHEET_ID", ss.getId()); }
   ensureSheet_(ss, "users", ["login", "role", "name", "salt", "hash", "created"]);
   ensureSheet_(ss, "sessions", ["tokenHash", "login", "expires"]);
   ensureSheet_(ss, "docs", ["path", "parent", "data", "updated"]);
@@ -62,7 +62,7 @@ function ensureSheet_(ss, name, header) {
 /* ================================================================ web app entry points */
 
 function doGet() {
-  return ContentService.createTextOutput("PhD Supervision Log backend is running. Open the website to use it.");
+  return ContentService.createTextOutput("WiNDS Lab Research Tracking backend is running. Open the website to use it.");
 }
 
 function doPost(e) {
@@ -111,7 +111,7 @@ function dispatch_(action, req) {
       const u = findUser_(login);
       if (!u || hashSecret_(secret, u.salt) !== u.hash) {
         noteFailure_(login);
-        fail_("invalid-credential", "Those details don't match an account. Check your admission number (or email) and secret code.");
+        fail_("invalid-credential", "Those details don't match an account. Check your admission number (or email) and password.");
       }
       return newSession_(u);
     }
@@ -124,14 +124,12 @@ function dispatch_(action, req) {
       const adm = String(req.adm || "").trim(), key = admKey_(adm), name = String(req.name || "").trim().slice(0, 80);
       const login = "student:" + key;
       if (tooMany_("reg:" + key)) fail_("too-many-requests", "Too many attempts. Wait 10 minutes and try again.");
-      const join = getDoc_("private/join") || {};
-      if (String(req.code || "").trim() !== String(join.code || "")) { noteFailure_("reg:" + key); fail_("wrong-code", "That class code isn't right. Check it with your supervisor."); }
       if (key.length < 3 || !SEGMENT.test(key)) fail_("invalid-argument", "Check your admission number.");
-      if (String(req.secret || "").length < 6) fail_("invalid-argument", "Your secret code must be at least 6 characters.");
+      if (String(req.secret || "").length < 6) fail_("invalid-argument", "Your password must be at least 6 characters.");
       if (!name) fail_("invalid-argument", "Enter your name.");
       const email = String(req.email || "").trim().toLowerCase().slice(0, 120);
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail_("invalid-argument", "Enter a valid email address. It's used if you ever forget your secret code.");
-      if (findUser_(login)) fail_("already-exists", "This admission number is already registered. Sign in, or ask your supervisor to reset your secret code.");
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail_("invalid-argument", "Enter a valid email address. It's used if you ever forget your password.");
+      if (findUser_(login)) fail_("already-exists", "This admission number is already registered. Sign in, or ask your supervisor to reset your password.");
       createUser_(login, "student", name, String(req.secret));
       if (!getDoc_("students/" + key)) {
         putDoc_("students/" + key, {
@@ -156,13 +154,13 @@ function dispatch_(action, req) {
           cache.put("r:" + sha_(token), login, RESET_MINUTES * 60);
           cache.put(rk, String(sent + 1), 3600);
           const link = SITE_URL + "reset.html?t=" + encodeURIComponent(token);
-          const who = u.role === "supervisor" ? "password" : "secret code";
+          const who = "password";
           MailApp.sendEmail({
-            to: to, name: "PhD Supervision Log",
-            subject: "Reset your PhD Supervision Log " + who,
-            body: "Hello " + (u.name || "") + ",\n\nSomeone asked to reset the " + who + " for your PhD Supervision Log account. Open this link within " + RESET_MINUTES + " minutes to choose a new one:\n\n" + link +
+            to: to, name: "WiNDS Lab Research Tracking",
+            subject: "Reset your WiNDS Lab Research Tracking " + who,
+            body: "Hello " + (u.name || "") + ",\n\nSomeone asked to reset the " + who + " for your WiNDS Lab Research Tracking account. Open this link within " + RESET_MINUTES + " minutes to choose a new one:\n\n" + link +
                   "\n\nYour tasks, papers and meetings are not affected.\nIf you didn't ask for this, ignore this email; nothing changes.",
-            htmlBody: "<p>Hello " + escapeHtml_(u.name || "") + ",</p><p>Someone asked to reset the " + who + " for your <b>PhD Supervision Log</b> account. Open this link within " + RESET_MINUTES + " minutes to choose a new one:</p>" +
+            htmlBody: "<p>Hello " + escapeHtml_(u.name || "") + ",</p><p>Someone asked to reset the " + who + " for your <b>WiNDS Lab Research Tracking</b> account. Open this link within " + RESET_MINUTES + " minutes to choose a new one:</p>" +
                       "<p><a href=\"" + link + "\" style=\"display:inline-block;padding:10px 16px;background:#1f5f6b;color:#fff;border-radius:6px;text-decoration:none\">Choose a new " + who + "</a></p>" +
                       "<p>Your tasks, papers and meetings are not affected.<br>If you didn't ask for this, ignore this email; nothing changes.</p>"
           });
@@ -185,9 +183,9 @@ function dispatch_(action, req) {
 
     case "resetSecret": {
       const u = requireUser_(req);
-      if (u.role !== "supervisor") fail_("permission-denied", "Only the supervisor can reset secret codes.");
+      if (u.role !== "supervisor") fail_("permission-denied", "Only the supervisor can reset passwords.");
       const secret = String(req.secret || "");
-      if (secret.length < 6) fail_("invalid-argument", "The new secret code must be at least 6 characters.");
+      if (secret.length < 6) fail_("invalid-argument", "The new password must be at least 6 characters.");
       const login = "student:" + admKey_(req.key);
       if (!findUser_(login)) fail_("not-found", "That student has no login yet. They can register on the registration page.");
       setSecret_(login, secret);

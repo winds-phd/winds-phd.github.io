@@ -1,15 +1,15 @@
-# PhD Supervision Log — GitHub Pages + Google Drive
+# WiNDS Lab Research Tracking — GitHub Pages + Google Drive
 
 - **Website:** these files, hosted free on GitHub Pages.
-- **Data:** a Google Sheet called **"PhD Supervision Log — data"** in *your* Google Drive, written by a small Google Apps Script (`google-apps-script/Code.gs`) that runs under your Google account.
-- **Logins:** separate pages for students (**admission number + secret code**) and the supervisor (**email + password**). Students don't need Google accounts.
+- **Data:** a Google Sheet called **"WiNDS Lab Research Tracking — data"** in *your* Google Drive, written by a small Google Apps Script (`google-apps-script/Code.gs`) that runs under your Google account.
+- **Logins:** separate pages for students (**admission number + password**) and the supervisor (**email + password**). Students don't need Google accounts.
 
 ```
 index.html              start page: "I'm a student" / "I'm the supervisor"
-student-login.html      student sign-in (admission number + secret code)
+student-login.html      student sign-in (admission number + password)
 forgot.html             "Forgot?" — emails a reset link
-reset.html              opened from the email: choose a new secret code / password
-register.html           student sign-up with the class code (starts as xxxxx)
+reset.html              opened from the email: choose a new password / password
+register.html           student sign-up: admission number, password, name, email
 supervisor-login.html   supervisor sign-in (email + password)
 supervisor-signup.html  supervisor sign-up, once, with the setup key
 dashboard.html      supervisor's working page
@@ -23,10 +23,10 @@ google-apps-script/Code.gs   the backend that stores data in your Drive
 
 ## Part A — Google Drive backend (10 minutes)
 
-1. Go to <https://script.google.com> → **New project**. Name it "PhD Supervision Log".
+1. Go to <https://script.google.com> → **New project**. Name it "WiNDS Lab Research Tracking".
 2. Delete what's in `Code.gs`, paste in the whole of **`google-apps-script/Code.gs`**, and **Save**.
 3. In the function menu next to **Run ▶** choose **`init`**, click **Run**, and approve the permissions it asks for
-   (Google may show "Google hasn't verified this app": click **Advanced → Go to PhD Supervision Log** — it's your own script).
+   (Google may show "Google hasn't verified this app": click **Advanced → Go to WiNDS Lab Research Tracking** — it's your own script).
 4. Open **Execution log**. Note two things:
    - the **Data sheet** link (the Google Sheet now in your Drive), and
    - the **SETUP KEY** — you need it once, in Part C.
@@ -48,18 +48,18 @@ google-apps-script/Code.gs   the backend that stores data in your Drive
 
 1. Open **https://winds-phd.github.io/supervisor-signup.html** (or the start page → "I'm the supervisor").
 2. Enter the **SETUP KEY** from Part A, your name, email and a password (8+ characters).
-3. You're on the dashboard. The **class code is 67890** (change it in the left column).
+3. You're on the dashboard. The left column shows the student sign-up link with a **Copy link** button.
 
 ## Students
-Send them `https://winds-phd.github.io/register.html` and the class code. They register once, then sign in at **https://winds-phd.github.io/student-login.html** with **admission number + secret code**. Each student sees only their own record; the Apps Script checks this on every request.
+Send them `https://winds-phd.github.io/register.html`. They register once, then sign in at **https://winds-phd.github.io/student-login.html** with **admission number + password**. Each student sees only their own record; the Apps Script checks this on every request.
 
 ## Sections on each student's page
 Tasks (blue) · Publications (green) · Paper details: titles and links to read or cite (violet) · Conferences: shared by the whole group, anyone can add (rose) · Meetings (peach). Supervisor feedback is highlighted in yellow wherever it appears.
 
 ## Good to know
-- **Your data** is the Google Sheet in your Drive (tabs: `docs`, `users`, `sessions`). Don't edit it by hand while people are using the site. Secret codes and passwords are stored only as salted hashes.
+- **Your data** is the Google Sheet in your Drive (tabs: `docs`, `users`, `sessions`). Don't edit it by hand while people are using the site. Passwords and passwords are stored only as salted hashes.
 - **Back up:** in Google Sheets, **File → Make a copy** (or File → Download).
-- **Forgot a secret code or password:** click **Forgot?** on the sign-in page. A reset link (valid 60 minutes, works once) is emailed from your Gmail to the student's recovery email, or to the supervisor's email. All records are kept. At most 3 emails per account per hour.
+- **Forgot a password or password:** click **Forgot?** on the sign-in page. A reset link (valid 60 minutes, works once) is emailed from your Gmail to the student's recovery email, or to the supervisor's email. All records are kept. At most 3 emails per account per hour.
 - **Student has no email on file / no email arrives:** Dashboard → open the student → **Reset login code**, or add their **Recovery email** on their page.
 - **Last resort for the supervisor:** in the Apps Script editor run **`newSetupKey`**, then sign up again on `supervisor-signup.html`. Data is kept.
 - **Changed `Code.gs` later?** Deploy → **Manage deployments** → edit (pencil) → Version: **New version** → Deploy. The URL stays the same.

@@ -307,3 +307,7 @@ tr.stage-row td { background: var(--surface); color: var(--pubs-ink); font-size:
 .check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 0.92rem; }
 .check input { width: auto; }
 .people { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 6px 0; }
+
+.signup-url { display: block; font-family: var(--f-mono); font-size: 0.8rem; background: var(--sunk); padding: 6px 8px; border-radius: 6px; overflow-wrap: anywhere; }
+#joinPanel { gap: 8px; }
+#joinPanel .btn { justify-self: start; }

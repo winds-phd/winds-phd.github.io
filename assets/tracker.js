@@ -142,7 +142,7 @@ function renderOverview() {
     d.replaceChildren(h("div", { class: "empty" },
       h("h3", { text: "No students have registered yet" }),
       h("p", { text: "Each student gets a task register and a meeting log. Every task records its status, progress, assigned date, due date and how many days it took. At each meeting you update every open task in one place, and that update is kept in both the meeting record and the task's own history." }),
-      h("p", null, "Share the student registration page (", h("b", { text: "register.html" }), ") and the class code shown on the left. Each student creates their own login with their admission number and a secret code, and appears here straight away.")));
+      h("p", null, "Send students the sign-up link shown on the left. Each student creates their own account with their admission number and a password, and appears here straight away.")));
     return;
   }
   const open = tasksOf().filter(t => !isDone(t)).sort(sortTasks);
@@ -435,10 +435,10 @@ function buildStudent(s) {
   showTab();
   updSig = null; pupdSig = null;
 }
-/** Recovery email, used for "Forgot your secret code?" links. Editable by the student and the supervisor. */
+/** Recovery email, used for "Forgot your password?" links. Editable by the student and the supervisor. */
 function emailRow(s) {
   const input = h("input", { id: "em-" + s.id, type: "email", maxlength: "120", value: s.email || "", placeholder: "name@example.com", "aria-label": "Recovery email", style: "max-width:280px" });
-  const warn = h("span", { class: "chip warn", hidden: !!s.email, text: "Add an email so the secret code can be reset" });
+  const warn = h("span", { class: "chip warn", hidden: !!s.email, text: "Add an email so the password can be reset" });
   const form = h("form", { class: "email-row", onsubmit: async e => {
       e.preventDefault(); const v = input.value.trim().toLowerCase();
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { say("Enter a valid email address."); return; }
@@ -447,14 +447,14 @@ function emailRow(s) {
   return form;
 }
 function resetBox(s) {
-  const input = h("input", { id: "rs-" + s.id, type: "text", minlength: "6", maxlength: "64", placeholder: "New secret code", autocomplete: "off", "aria-label": "New secret code for " + s.name });
+  const input = h("input", { id: "rs-" + s.id, type: "text", minlength: "6", maxlength: "64", placeholder: "New password", autocomplete: "off", "aria-label": "New password for " + s.name });
   const form = h("form", { class: "row", hidden: true, style: "flex-basis:100%", onsubmit: async e => {
       e.preventDefault(); const v = input.value.trim();
       if (v.length < 6) { say("Use at least 6 characters."); return; }
-      try { await resetStudentSecret(s.id, v); say("Secret code reset. Tell " + s.name + " the new code: " + v); input.value = ""; form.hidden = true; }
-      catch (err) { say(err.message || "Couldn't reset the code."); }
-    } }, input, h("button", { class: "btn small", type: "submit", text: "Set code" }));
-  const btn = h("button", { class: "btn ghost small", type: "button", text: "Reset login code", onclick: () => { form.hidden = !form.hidden; if (!form.hidden) input.focus(); } });
+      try { await resetStudentSecret(s.id, v); say("Password reset. Tell " + s.name + " the new password: " + v); input.value = ""; form.hidden = true; }
+      catch (err) { say(err.message || "Couldn't reset the password."); }
+    } }, input, h("button", { class: "btn small", type: "submit", text: "Set password" }));
+  const btn = h("button", { class: "btn ghost small", type: "button", text: "Reset password", onclick: () => { form.hidden = !form.hidden; if (!form.hidden) input.focus(); } });
   return h("div", { style: "display:flex;flex-wrap:wrap;gap:8px;align-items:end" }, btn, form);
 }
 function val(id) { const el = document.getElementById(id); return el ? el.value : ""; }
@@ -963,20 +963,11 @@ export async function start(pageRole) {
     if (S.isOwner) renderRoster();
   }, () => {});
   if (sup) {
-    const jp = document.getElementById("joinPanel"); jp.hidden = false;
-    let seeded = false;
-    db.doc("private/join").onSnapshot(snap => {
-      document.getElementById("joinShow").textContent = snap.exists && snap.data().code ? snap.data().code : "Not set";
-      // First run: start with the class code 67890 so students can register right away.
-      if (!snap.exists && !snap.metadata.fromCache && !seeded) { seeded = true; db.doc("private/join").set({ code: "67890", updatedAt: Date.now() }).catch(() => {}); } },
-      () => { document.getElementById("joinShow").textContent = "Can't read"; });
-    document.getElementById("joinEditBtn").onclick = () => { document.getElementById("joinForm").hidden = false; document.getElementById("joinNew").focus(); };
-    document.getElementById("joinCancel").onclick = () => { document.getElementById("joinForm").hidden = true; };
-    document.getElementById("joinForm").onsubmit = async e => {
-      e.preventDefault(); const code = val("joinNew").trim();
-      if (!/^[A-Za-z0-9]{4,12}$/.test(code)) { say("Use 4 to 12 letters or digits."); return; }
-      const ok = await write(d => d.doc("private/join").set({ code, updatedAt: Date.now() }), "Class code changed to " + code);
-      if (ok) { e.target.reset(); e.target.hidden = true; }
+    const url = new URL("register.html", location.href).href;
+    document.getElementById("signupUrl").textContent = url;
+    document.getElementById("copySignup").onclick = async () => {
+      try { await navigator.clipboard.writeText(url); say("Sign-up link copied"); }
+      catch (e) { const r = document.createRange(); r.selectNodeContents(document.getElementById("signupUrl")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); say("Press Ctrl+C to copy the selected link"); }
     };
     db.collection("students").onSnapshot(snap => {
       S.students = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
