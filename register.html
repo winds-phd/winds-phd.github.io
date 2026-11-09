@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Student registration · PhD Supervision Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card" style="max-width:520px">
+    <div class="auth-brand">
+      <div class="label">Student registration</div>
+      <h1>Join your supervisor's group</h1>
+      <p>You'll need the class code from your supervisor. Choose a secret code you'll remember; you'll sign in with your admission number and this secret code.</p>
+    </div>
+
+    <section class="panel" id="card">
+      <form id="regForm" novalidate>
+        <div class="row">
+          <label class="fieldlabel">Class code<input id="code" required maxlength="12" autocomplete="off" inputmode="numeric"></label>
+          <label class="fieldlabel">Admission number<input id="adm" required maxlength="40" autocomplete="username" placeholder="e.g. 22DR0123"></label>
+        </div>
+        <div class="row">
+          <label class="fieldlabel">Secret code (6+ characters)<input id="secret" type="password" required minlength="6" autocomplete="new-password"></label>
+          <label class="fieldlabel">Repeat secret code<input id="secret2" type="password" required minlength="6" autocomplete="new-password"></label>
+        </div>
+        <label class="fieldlabel">Full name<input id="name" required maxlength="80"></label>
+        <label class="fieldlabel">Thesis topic<input id="topic" maxlength="200" placeholder="Working title"></label>
+        <div class="row">
+          <label class="fieldlabel">Admission year<input id="year" type="number" min="1990" max="2100"></label>
+          <label class="fieldlabel">Current stage<select id="stage"></select></label>
+        </div>
+        <p class="err" id="err" role="alert"></p>
+        <button class="btn block" type="submit" id="btn">Create my account</button>
+      </form>
+    </section>
+
+    <p class="auth-foot">Already registered? <a href="index.html">Sign in</a></p>
+  </div>
+</div>
+
+<script type="module">
+  import { registerStudent, authMessage, configured, setupNotice } from "./assets/core.js";
+  if (!configured) setupNotice(document.getElementById("card"));
+  const STAGES = ["Coursework", "Comprehensive exam", "Research proposal", "Research work", "Open seminar / pre-submission", "Thesis submitted", "Viva voce", "Awarded"];
+  const $ = id => document.getElementById(id);
+  for (const s of STAGES) { const o = document.createElement("option"); o.value = o.textContent = s; $("stage").append(o); }
+
+  $("regForm").addEventListener("submit", async e => {
+    e.preventDefault(); $("err").textContent = "";
+    const v = id => $(id).value.trim();
+    if (!v("code") || !v("adm") || !v("name")) { $("err").textContent = "Fill in the class code, your admission number and your name."; return; }
+    if ($("secret").value.length < 6) { $("err").textContent = "Your secret code must be at least 6 characters."; return; }
+    if ($("secret").value !== $("secret2").value) { $("err").textContent = "The two secret codes don't match."; return; }
+    $("btn").disabled = true;
+    try {
+      await registerStudent({ code: v("code"), adm: v("adm"), secret: $("secret").value, name: v("name"), topic: v("topic"), year: v("year"), stage: $("stage").value });
+      location.href = "student.html";
+    } catch (err) { $("err").textContent = authMessage(err); }
+    finally { $("btn").disabled = false; }
+  });
+</script>
+</body>
+</html>

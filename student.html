@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>My PhD Record · PhD Supervision Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/app.css">
+<style>.layout { grid-template-columns: minmax(0, 1fr); }</style>
+</head>
+<body>
+<div class="app">
+  <div class="userbar"><span id="whoami">Checking sign-in…</span><button class="btn ghost small" type="button" id="signOutBtn">Sign out</button></div>
+  <header class="top">
+    <div>
+      <div class="label" id="page-eyebrow">My PhD record</div>
+      <h1>PhD Supervision Log</h1>
+      <p id="page-sub">Your tasks, papers and meetings. Only you and your supervisor can see them.</p>
+    </div>
+    <div class="stats" id="stats"></div>
+  </header>
+  <div class="layout">
+    <aside class="roster" hidden><div class="roster-list" id="roster"></div><section id="joinPanel" hidden></section></aside>
+    <main class="detail" id="detail"></main>
+  </div>
+</div>
+<div id="status" role="status" hidden></div>
+<script>
+  if (location.protocol === "file:") document.getElementById("detail").innerHTML = '<div class="empty"><h3>Open the website address</h3><p>This page was opened as a file. Open your GitHub Pages address (https://YOUR-NAME.github.io/REPO/) instead.</p></div>';
+</script>
+<script type="module">
+  import { start } from "./assets/tracker.js";
+  start("student");
+</script>
+</body>
+</html>

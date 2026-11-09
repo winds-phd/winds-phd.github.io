@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sign in · PhD Supervision Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="label">Research group</div>
+      <h1 id="groupName">PhD Supervision Log</h1>
+      <p>Tasks, papers and meetings for doctoral scholars.</p>
+    </div>
+
+    <section class="panel" id="card">
+      <!-- One sign-in for everyone -->
+      <form id="loginForm" novalidate>
+        <h3>Sign in</h3>
+        <label class="fieldlabel">Admission number or email<input id="who" autocomplete="username" required placeholder="Students: admission no. · Supervisor: email"></label>
+        <label class="fieldlabel">Secret code or password<input id="secret" type="password" autocomplete="current-password" required></label>
+        <p class="err" id="err" role="alert"></p>
+        <button class="btn block" type="submit" id="btn">Sign in</button>
+        <p class="note">Students: forgot your secret code? Ask your supervisor to reset it.</p>
+      </form>
+
+      <!-- First run only -->
+      <form id="setupForm" novalidate hidden>
+        <h3>Create the supervisor account</h3>
+        <p class="note">First time here. Enter the setup key shown in the Apps Script log after running <code>init</code>, then choose your sign-in email and password.</p>
+        <label class="fieldlabel">Setup key<input id="setKey" autocomplete="off" required></label>
+        <label class="fieldlabel">Your name<input id="setName" maxlength="80" value="Supervisor"></label>
+        <label class="fieldlabel">Email<input id="setEmail" type="email" autocomplete="username" required></label>
+        <label class="fieldlabel">Password (8+ characters)<input id="setPass" type="password" autocomplete="new-password" required minlength="8"></label>
+        <label class="fieldlabel">Repeat password<input id="setPass2" type="password" autocomplete="new-password" required minlength="8"></label>
+        <p class="err" id="setErr" role="alert"></p>
+        <button class="btn block" type="submit" id="setBtn">Create account and continue</button>
+      </form>
+    </section>
+
+    <p class="auth-foot" id="foot">New student? <a href="register.html">Register with your class code</a></p>
+  </div>
+</div>
+
+<script type="module">
+  import { configured, currentUser, isSupervisor, signIn, getStatus, setupSupervisor, authMessage, setupNotice } from "./assets/core.js";
+  import { GROUP_NAME } from "./assets/config.js";
+  const $ = id => document.getElementById(id);
+  $("groupName").textContent = GROUP_NAME;
+  document.title = "Sign in · " + GROUP_NAME;
+  const go = u => location.replace(isSupervisor(u) ? "dashboard.html" : "student.html");
+
+  if (!configured) { setupNotice($("card")); $("foot").hidden = true; }
+  else {
+    $("btn").disabled = true; $("btn").textContent = "Connecting…";
+    try {
+      const u = await currentUser();
+      if (u) go(u);
+      else {
+        const st = await getStatus();
+        if (st.setupNeeded) { $("loginForm").hidden = true; $("setupForm").hidden = false; $("foot").hidden = true; }
+      }
+    } catch (e) { $("err").textContent = authMessage(e); }
+    finally { $("btn").disabled = false; $("btn").textContent = "Sign in"; }
+  }
+
+  $("loginForm").addEventListener("submit", async e => {
+    e.preventDefault(); $("err").textContent = "";
+    const who = $("who").value.trim(), secret = $("secret").value;
+    if (!who || !secret) { $("err").textContent = "Enter your admission number (or email) and your secret code (or password)."; return; }
+    $("btn").disabled = true; $("btn").textContent = "Signing in…";
+    try { go(await signIn(who, secret)); }
+    catch (err) { $("err").textContent = authMessage(err); $("btn").disabled = false; $("btn").textContent = "Sign in"; }
+  });
+
+  $("setupForm").addEventListener("submit", async e => {
+    e.preventDefault(); $("setErr").textContent = "";
+    if ($("setPass").value !== $("setPass2").value) { $("setErr").textContent = "The two passwords don't match."; return; }
+    $("setBtn").disabled = true;
+    try { go(await setupSupervisor($("setKey").value.trim(), $("setEmail").value.trim(), $("setPass").value, $("setName").value.trim())); }
+    catch (err) { $("setErr").textContent = authMessage(err); $("setBtn").disabled = false; }
+  });
+</script>
+</body>
+</html>
