@@ -54,7 +54,7 @@ google-apps-script/Code.gs   the backend that stores data in your Drive
 Send them `https://winds-phd.github.io/register.html` and the lab code. They register once, then sign in at **https://winds-phd.github.io/student-login.html** with **admission number + password**. Each student sees only their own record; the Apps Script checks this on every request.
 
 ## Sections on each student's page
-Tasks (blue) · Publications (green) · Paper details: titles and links to read or cite (violet) · Conferences: shared by the whole group, anyone can add (rose) · Meetings (peach). Supervisor feedback is highlighted in yellow wherever it appears.
+Tasks (blue) · Publications (green) · Read articles: title, journal or conference name, and link (violet) · Conferences: shared by the whole group, anyone can add (rose) · Meetings (peach). Supervisor feedback is highlighted in yellow wherever it appears.
 
 ## Email notifications
 Sent from the Gmail account that owns the Apps Script, to students' **recovery email** and to the supervisor's sign-in email:

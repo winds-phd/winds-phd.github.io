@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-2200";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-2205";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -444,23 +444,29 @@ function buildStudent(s) {
     h("div", { class: "tasks", id: "paper-list" }),
     S.canWrite ? h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper: currently writing, submitted or accepted" }), h("div", { style: "margin-top:10px" }, paperAddForm(s))) : null);
 
+  const refType = h("select", { id: "nr-type", onchange: e => { document.getElementById("nr-venue-label").firstChild.textContent = e.target.value === "Journal" ? "Journal name" : e.target.value === "Conference" ? "Conference name" : "Where it appeared (optional)"; } },
+    ["Journal", "Conference", "Other"].map(x => h("option", { value: x, text: x === "Other" ? "Other (preprint, book, thesis…)" : x })));
   const refForm = h("form", { class: "edit-box", hidden: !S.canWrite, onsubmit: async e => {
-      e.preventDefault(); const title = val("nr-title").trim(); let link = val("nr-link").trim();
-      if (!title) { say("Add the paper's title."); return; }
+      e.preventDefault(); const title = val("nr-title").trim(); let link = val("nr-link").trim(); const type = refType.value, venue = val("nr-venue").trim();
+      if (!title) { say("Add the article's title."); return; }
+      if (type !== "Other" && !venue) { say("Add the " + type.toLowerCase() + " name."); return; }
       if (link && !/^https?:\/\//i.test(link)) link = /^10\.\d{4,}\//.test(link) ? "https://doi.org/" + link : "https://" + link;
-      const ok = await write(db => db.collection(C("refs", s.id)).add({ studentId: s.id, title, link, note: val("nr-note").trim(), added: todayStr(), createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole }), "Paper added to the list");
-      if (ok) { ["nr-title", "nr-link", "nr-note"].forEach(id => document.getElementById(id).value = ""); }
+      const ok = await write(db => db.collection(C("refs", s.id)).add({ studentId: s.id, title, link, type, venue, note: val("nr-note").trim(), added: todayStr(), createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole }), "Article added");
+      if (ok) { ["nr-title", "nr-link", "nr-venue", "nr-note"].forEach(id => document.getElementById(id).value = ""); }
     } },
-    h("h4", { text: "Add a paper" }),
+    h("h4", { text: "Add an article" }),
     h("label", { class: "fieldlabel" }, "Title", h("input", { id: "nr-title", maxlength: "400", placeholder: "e.g. Attention Is All You Need" })),
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "Type", refType),
+      h("label", { class: "fieldlabel", id: "nr-venue-label" }, "Journal name", h("input", { id: "nr-venue", maxlength: "300", placeholder: "e.g. IEEE Transactions on Mobile Computing / IEEE INFOCOM 2026" }))),
     h("div", { class: "row" },
       h("label", { class: "fieldlabel" }, "Link (URL or DOI)", h("input", { id: "nr-link", maxlength: "500", placeholder: "https://… or 10.xxxx/…" })),
       h("label", { class: "fieldlabel" }, "Note (optional)", h("input", { id: "nr-note", maxlength: "300", placeholder: "Why it matters, which chapter" }))),
-    h("div", null, h("button", { class: "btn", type: "submit", text: "Add paper" })));
+    h("div", null, h("button", { class: "btn", type: "submit", text: "Add article" })));
   const refsPanel = h("section", { class: "panel sec-refs" },
-    h("div", { class: "panel-head" }, h("h3", { text: "Paper details" }), h("span", { class: "muted", id: "ref-count" })),
-    h("p", { class: "note", text: "Papers to read or cite, with their links. The supervisor and the student can both add to this list." }),
-    h("ul", { class: "refs", id: "ref-list" }), refForm);
+    h("div", { class: "panel-head" }, h("h3", { text: "Read articles" }), h("span", { class: "muted", id: "ref-count" })),
+    h("p", { class: "note", text: "Articles read or to cite, with where they were published and a link. The supervisor and the student can both add to this list." }),
+    refForm, h("ul", { class: "refs", id: "ref-list" }));
 
   tasks.classList.add("sec-tasks"); papersPanel.classList.add("sec-pubs"); meetPanel.classList.add("sec-meet"); logPanel.classList.add("sec-meet");
   const panes = {
@@ -474,7 +480,7 @@ function buildStudent(s) {
       h("div", { class: "cols" }, meetPanel, logPanel)) };
   const tabBtn = (k, l) => h("button", { type: "button", role: "tab", "data-tab": k, class: "tab-" + k, "aria-selected": S.tab === k ? "true" : "false",
     onclick: () => { S.tab = k; showTab(); } }, l, h("span", { class: "n", id: "tabn-" + k }));
-  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Paper details"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"));
+  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Read articles"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"));
   if (S.isOwner && S.tab === "confs") S.tab = "tasks";
   d.replaceChildren(...[head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings].filter(Boolean));
   showTab();
@@ -941,11 +947,14 @@ function refItem(r) {
   const canDelete = S.isOwner || r.createdBy === S.uid;
   let armed = null;
   const del = canDelete ? h("button", { class: "x", type: "button", text: "Remove" }) : null;
-  if (del) del.onclick = () => { if (!armed) { del.textContent = "Confirm remove"; armed = setTimeout(() => { armed = null; del.textContent = "Remove"; }, 4000); return; } clearTimeout(armed); write(db => db.doc(P("refs", r)).delete(), "Removed from the list"); };
+  if (del) del.onclick = () => { if (!armed) { del.textContent = "Confirm remove"; armed = setTimeout(() => { armed = null; del.textContent = "Remove"; }, 4000); return; } clearTimeout(armed); write(db => db.doc(P("refs", r)).delete(), "Article removed"); };
   return h("li", { class: "ref" + (bySup(r) ? " ref-sup" : "") },
     h("div", { style: "min-width:0" },
       r.link ? h("a", { class: "ref-title", href: r.link, target: "_blank", rel: "noopener", text: r.title }) : h("span", { class: "ref-title", text: r.title }),
-      h("div", { class: "t-sub" }, host ? h("span", { class: "mono", text: host }) : h("span", { text: "No link" }), h("span", { text: "Added " + fmtD(r.added) }),
+      h("div", { class: "t-sub" },
+        r.type ? h("span", { class: "chip " + (r.type === "Journal" ? "" : "plain"), text: r.type }) : null,
+        r.venue ? h("span", { class: "p-venue", text: r.venue }) : null,
+        host ? h("span", { class: "mono", text: host }) : h("span", { class: "muted", text: "No link" }), h("span", { text: "Added " + fmtD(r.added) }),
         h("span", { class: bySup(r) ? "chip fbchip" : "who", text: bySup(r) ? "Suggested by supervisor" : (r.byName ? "by " + r.byName : "") })),
       r.note ? h("p", { class: "ref-note", text: r.note }) : null),
     del);
@@ -1003,8 +1012,8 @@ function refreshStudent(s) {
   const refs = (S.refs || []).filter(r => r.studentId === s.id).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   document.getElementById("tabn-refs").textContent = refs.length;
   refreshConfs();
-  document.getElementById("ref-count").textContent = plural(refs.length, "paper");
-  document.getElementById("ref-list").replaceChildren(...(refs.length ? refs.map(refItem) : [h("li", null, h("p", { class: "note", text: "No papers listed yet. Add a title and link below." }))]));
+  document.getElementById("ref-count").textContent = plural(refs.length, "article");
+  document.getElementById("ref-list").replaceChildren(...(refs.length ? refs.map(refItem) : [h("li", null, h("p", { class: "note", text: "No articles yet. Add one above with its journal or conference and link." }))]));
   const sorted = ms.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
   document.getElementById("meet-count").textContent = plural(sorted.length, "meeting");
   document.getElementById("meet-list").replaceChildren(...(sorted.length ? sorted.map(meetingItem) : [h("li", null, h("p", { class: "note", text: "No meetings logged yet." }))]));
