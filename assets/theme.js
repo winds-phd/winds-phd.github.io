@@ -25,8 +25,8 @@
     });
     function mark() { var m = saved(); Array.prototype.forEach.call(box.children, function (b) { b.setAttribute("aria-pressed", String(b.dataset.mode === (document.documentElement.getAttribute("data-theme") || "auto"))); }); }
     mark();
-    var bar = document.querySelector(".userbar");
-    if (bar) bar.insertBefore(box, bar.firstChild);
+    var slot = document.getElementById("themeSlot");
+    if (slot) { box.classList.add("compact"); slot.appendChild(box); }
     else { box.classList.add("floating"); document.body.appendChild(box); }
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build); else build();

@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-2130";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-2200";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -198,7 +198,7 @@ function renderOverview() {
     recent.length ? h("ul", { class: "meetings" }, recent.map(m => h("li", { class: "meeting" },
       h("div", { class: "m-top" }, h("button", { class: "linkish", type: "button", text: studentName(m.studentId), onclick: () => select(m.studentId) }), h("span", { class: "m-date", text: fmtD(m.date) })),
       h("p", { class: "note", text: plural((m.updates || []).length, "task update") + " · " + plural((m.newTasks || []).length, "new task") + (m.notes ? " · " + (m.notes.length > 140 ? m.notes.slice(0, 140) + "…" : m.notes) : "") }))))
-      : h("p", { class: "note", text: "No meetings logged yet. Pick a student on the left to log one." }));
+      : h("p", { class: "note", text: "No meetings recorded yet. Open a student on the left to record one." }));
   const pp = [...S.papers].sort((a, b) => stageOf(a) - stageOf(b) || studentName(a.studentId).localeCompare(studentName(b.studentId)));
   const papPanel = h("section", { class: "panel sec-pubs" },
     h("div", { class: "panel-head" }, h("h3", { text: "Publications" }), pubCounters(S.papers)),
@@ -420,22 +420,20 @@ function buildStudent(s) {
     h("div", { class: "panel-head" }, h("h3", { text: "Task register" }), filters),
     h("div", { class: "tasks", id: "task-list" }));
 
-  /* meeting form: task-wise */
-  const meetForm = h("form", { hidden: !S.canWrite, onsubmit: e => { e.preventDefault(); submitMeeting(s, e.target); } },
+  /* meeting form: one simple record per meeting */
+  const meetForm = h("form", { hidden: !S.canWrite, onsubmit: async e => { e.preventDefault(); await submitMeeting(s, e.target); } },
     h("div", { class: "row" },
       h("label", { class: "fieldlabel" }, "Meeting date", h("input", { id: "nm-date", type: "date", value: todayStr() })),
       h("label", { class: "fieldlabel" }, "Next meeting (optional)", h("input", { id: "nm-next", type: "date" }))),
-    h("label", { class: "fieldlabel" }, "General discussion", h("textarea", { id: "nm-notes", rows: "3", placeholder: "Overall progress, results discussed, decisions, concerns…" })),
-    h("div", { class: "label", text: "Task-wise update" }),
-    h("div", { class: "upd-list", id: "upd-list" }),
-    h("div", { class: "label", text: "Paper-wise update" }),
-    h("div", { class: "upd-list", id: "pupd-list" }),
-    h("label", { class: "fieldlabel" }, "New tasks assigned in this meeting, one per line", h("textarea", { id: "nm-actions", rows: "3", placeholder: "Rerun simulation with new boundary conditions\nDraft abstract for conference submission" })),
+    h("label", { class: "fieldlabel" }, "What was discussed", h("textarea", { id: "nm-notes", rows: "5", maxlength: "5000", placeholder: "Progress since the last meeting, results, problems, decisions…" })),
+    h("label", { class: "fieldlabel" }, "Action items (optional, one per line; each becomes a task)", h("textarea", { id: "nm-actions", rows: "3", maxlength: "3000", placeholder: "Rerun the simulation with new parameters\nSend the draft abstract" })),
     h("div", { class: "row" },
-      h("label", { class: "fieldlabel" }, "New tasks due by", h("input", { id: "nm-due", type: "date" })),
+      h("label", { class: "fieldlabel" }, "Action items due by (optional)", h("input", { id: "nm-due", type: "date" })),
       h("div", { style: "display:flex;align-items:end" }, h("button", { class: "btn", type: "submit", text: "Save meeting" }))));
   const meetPanel = h("section", { class: "panel" },
-    h("div", { class: "panel-head" }, h("h3", { text: "Log a meeting" }), h("span", { class: "muted", text: "Updates each task and keeps the record" })), meetForm,
+    h("div", { class: "panel-head" }, h("h3", { text: "Record a meeting" })),
+    h("p", { class: "note", text: S.isOwner ? "A short summary after each meeting. " + s.name + " gets an email with your notes." : "A short summary after each meeting with your supervisor." }),
+    meetForm,
     S.canWrite ? null : h("p", { class: "note", text: "You have view-only access." }));
   const logPanel = h("section", { class: "panel" },
     h("div", { class: "panel-head" }, h("h3", { text: "Meeting log" }), h("span", { class: "muted", id: "meet-count" })),
@@ -649,47 +647,25 @@ function refreshPaperRows(s) {
   }));
 }
 async function submitMeeting(s, f) {
-  const date = val("nm-date") || todayStr(), notes = val("nm-notes").trim(), next = val("nm-next");
-  const open = tasksOf(s.id).filter(t => !isDone(t));
-  const updates = [];
-  for (const t of open) {
-    const status = val("us-" + t.id) || statusOf(t), progress = status === "Done" ? 100 : Number(val("up-" + t.id) || t.progress || 0), remark = val("ur-" + t.id).trim();
-    if (status !== statusOf(t) || progress !== (t.progress || 0) || remark)
-      updates.push({ taskId: t.id, title: t.title, prevStatus: statusOf(t), status, prevProgress: t.progress || 0, progress, remark, day: Math.max(0, diff(startOf(t), date)), t });
-  }
-  const pupdates = [];
-  for (const p of papersOf(s.id).filter(pActive)) {
-    const status = val("mps-" + p.id) || pStatus(p), remark = val("mpr-" + p.id).trim();
-    if (status !== pStatus(p) || remark) pupdates.push({ paperId: p.id, title: p.title, prevStatus: pStatus(p), status, remark, p });
-  }
-  const actions = val("nm-actions").split("\n").map(x => x.trim()).filter(Boolean), due = val("nm-due");
-  if (!notes && !updates.length && !pupdates.length && !actions.length) { say("Add notes, a task or paper update, or a new task first."); return; }
-  if (actions.length && due && due < date) { say("New tasks can't be due before the meeting date."); return; }
+  const date = val("nm-date") || todayStr(), notes = val("nm-notes").trim(), next = val("nm-next"), due = val("nm-due");
+  const actions = val("nm-actions").split("\n").map(x => x.trim()).filter(Boolean);
+  if (!notes && !actions.length) { say("Write what was discussed, or add an action item."); return; }
+  if (date > todayStr()) { say("The meeting date is in the future. Use Scheduled meetings to plan upcoming ones."); return; }
+  if (next && next <= date) { say("The next meeting should be after this meeting's date."); return; }
+  if (actions.length && due && due < date) { say("Action items can't be due before the meeting date."); return; }
   const ok = await write(async db => {
     const newTasks = [];
     for (const a of actions) {
       const ref = await db.collection(C("tasks", s.id)).add({ studentId: s.id, title: a, details: "", owner: "student", assigned: date, due, status: "Not started", progress: 0, doneAt: "",
-        createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole, fromMeeting: date, history: [{ date, status: "Not started", progress: 0, remark: "Assigned in meeting", via: "assigned", by: S.uid, byName: S.myName, byRole: S.myRole }] });
+        createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole, fromMeeting: date,
+        history: [{ date, status: "Not started", progress: 0, remark: "Assigned in meeting", via: "assigned", by: S.uid, byName: S.myName, byRole: S.myRole }] });
       newTasks.push({ taskId: ref.id, title: a, due });
     }
-    for (const u of updates) {
-      const t = u.t;
-      await db.doc(P("tasks", t)).update({ status: u.status, progress: u.progress, doneAt: u.status === "Done" ? date : "",
-        history: [...(t.history || []), { date, status: u.status, progress: u.progress, remark: u.remark, via: "meeting", by: S.uid, byName: S.myName, byRole: S.myRole }] });
-    }
-    for (const u of pupdates) {
-      const p = u.p;
-      await db.doc(P("papers", p)).update({ status: u.status, ...(u.status !== u.prevStatus ? { statusSince: date, ...stampDates(p, u.status, date) } : {}),
-        history: [...(p.history || []), { date, status: u.status, remark: u.remark, via: "meeting", by: S.uid, byName: S.myName, byRole: S.myRole }] });
-    }
-    await db.collection(C("meetings", s.id)).add({ studentId: s.id, date, next, notes, createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole,
-      updates: updates.map(({ t, ...u }) => u), paperUpdates: pupdates.map(({ p, ...u }) => u), newTasks });
-  }, "Meeting saved: " + plural(updates.length, "task update") + ", " + plural(pupdates.length, "paper update") + ", " + plural(actions.length, "new task"));
+    await db.collection(C("meetings", s.id)).add({ studentId: s.id, date, next, notes, newTasks, updates: [], paperUpdates: [], createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole });
+  }, "Meeting saved" + (actions.length ? " with " + plural(actions.length, "action item") : ""));
   if (ok) {
-    pupdSig = null; document.getElementById("pupd-list").replaceChildren(); refreshPaperRows(s);
     ["nm-notes", "nm-actions", "nm-due", "nm-next"].forEach(id => document.getElementById(id).value = "");
     document.getElementById("nm-date").value = todayStr();
-    updSig = null; document.getElementById("upd-list").replaceChildren(); refreshUpdRows(s);
   }
 }
 
@@ -699,7 +675,7 @@ function meetingItem(m) {
     h("div", { class: "m-top" }, h("span", { class: "m-date", text: fmtD(m.date) }),
       h("span", { style: "display:flex;gap:6px;align-items:center;flex-wrap:wrap" }, m.next ? h("span", { class: "chip plain", text: "Next: " + fmtD(m.next) }) : null,
         h("span", { class: "who", text: m.byName ? "by " + m.byName : "" }),
-        S.canWrite ? h("button", { class: "x", type: "button", text: "Delete", "aria-label": "Delete meeting record", onclick: () => write(db => db.doc(P("meetings", m)).delete(), "Meeting record deleted") }) : null)),
+        S.canWrite && (S.isOwner || m.createdBy === S.uid) ? h("button", { class: "x", type: "button", text: "Delete", "aria-label": "Delete meeting record", onclick: () => write(db => db.doc(P("meetings", m)).delete(), "Meeting record deleted") }) : null)),
     m.notes ? (bySup(m) ? h("div", { class: "fb" }, h("span", { class: "fb-tag", text: "Supervisor feedback" }), h("p", { class: "notes", text: m.notes })) : h("p", { class: "notes", text: m.notes })) : null,
     ups.length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Task", "Day", "Status", "Progress", "Remark"].map(x => h("th", { text: x })))),
@@ -1005,8 +981,6 @@ function refreshStudent(s) {
   const tl = document.getElementById("task-list");
   const editing = tl.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
   if (!editing) tl.replaceChildren(...items);
-  refreshUpdRows(s);
-  refreshPaperRows(s);
   const pp = papersOf(s.id).sort((a, b) => (pActive(b) - pActive(a)) || PSTATUS.indexOf(pStatus(b)) - PSTATUS.indexOf(pStatus(a)) || (b.createdAt || 0) - (a.createdAt || 0));
   const pl = document.getElementById("paper-list");
   const pEditing = pl.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
@@ -1090,6 +1064,18 @@ function watchStudent(sid) {
 }
 function unwatchMissing() { for (const sid of Object.keys(subs)) if (!S.students.some(x => x.id === sid)) { subs[sid].un.forEach(u => u()); delete subs[sid]; rebuildFlat(); } }
 
+/** Top bar: initials, name and role; page heading greets the person. */
+function showAccount(name, role) {
+  const initials = String(name).replace(/^(dr|prof)\.?\s+/i, "").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("") || "?";
+  document.getElementById("avatar").textContent = initials;
+  document.getElementById("acctName").textContent = name;
+  document.getElementById("acctRole").textContent = role;
+  document.getElementById("account").hidden = false;
+  const hr = new Date().getHours(), part = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
+  // "Dr. Alakesh Kalita" -> "Dr. Kalita"; "Priya Sharma" -> "Priya"
+  const w = String(name).trim().split(/\s+/), titled = /^(dr|prof)\.?$/i.test(w[0]) && w.length > 1;
+  document.getElementById("page-title").textContent = part + ", " + (titled ? w[0] + " " + w[w.length - 1] : w[0]);
+}
 export async function start(pageRole) {
   document.getElementById("signOutBtn").onclick = () => signOut();
   if (!configured) { S.loaded = NCOLL; setupNotice(document.getElementById("detail")); return; }
@@ -1100,7 +1086,7 @@ export async function start(pageRole) {
   if (pageRole === "student" && sup) { location.href = "dashboard.html"; return; }
   S.db = db; S.uid = user.uid; S.isOwner = sup;
   S.myName = sup ? "Supervisor" : (user.displayName || "Student"); S.myRole = sup ? "supervisor" : "student";
-  document.getElementById("whoami").textContent = sup ? "Signed in as supervisor (" + user.email + ")" : "Signed in as " + (user.displayName || "student");
+  showAccount(sup ? (user.displayName && user.displayName !== "Supervisor" ? user.displayName : "Supervisor") : (user.displayName || "Student"), sup ? "Supervisor · " + user.email : "Student");
   S.timer = setTimeout(() => { if (S.loaded < NCOLL) { const n = document.getElementById("loadnote"); if (n) n.textContent = "Can't reach the saved records yet. They'll appear when the connection returns."; } }, 10000);
   renderAll();
   db.collection("conferences").onSnapshot(snap => {
@@ -1148,6 +1134,7 @@ export async function start(pageRole) {
       if (!snap.exists) { say("Your record was removed by the supervisor."); setTimeout(signOut, 2500); return; }
       S.students = [{ ...snap.data(), id: key }];
       S.myName = snap.data().name || S.myName;
+      showAccount(S.myName, "Student · " + (snap.data().admissionNo || key.toUpperCase()) + " · " + courseOf(snap.data()));
       watchStudent(key); S.sel = key;
       if (!snap.metadata.fromCache) { S.loaded = NCOLL; clearTimeout(S.timer); }
       renderAll();

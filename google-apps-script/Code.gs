@@ -233,6 +233,9 @@ function dispatch_(action, req) {
       if (!canSee_(u, segs)) fail_("permission-denied", "You don't have access to this record.");
       if (u.role === "student" && segs[0] === "students" && segs.length === 2) fail_("permission-denied", "Only the supervisor can remove a student.");
       if (u.role === "student" && segs[0] === "students" && segs[2] === "tasks") fail_("permission-denied", "Only the supervisor can delete tasks.");
+      if (u.role === "student" && segs[0] === "students" && segs[2] === "schedule") fail_("permission-denied", "Only the supervisor can cancel scheduled meetings.");
+      if (u.role === "student" && segs[0] === "students" && (segs[2] === "meetings" || segs[2] === "refs") && segs.length === 4 && (getDoc_(path) || {}).createdBy && getDoc_(path).createdBy !== u.login)
+        fail_("permission-denied", "Only the person who added this, or the supervisor, can delete it.");
       if (segs[0] === "conferences" && u.role !== "supervisor" && (getDoc_(path) || {}).createdBy !== u.login) fail_("permission-denied", "You can only remove conference entries you added.");
       const prevRev = currentRev_();
       deleteDoc_(path);

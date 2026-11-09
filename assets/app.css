@@ -86,7 +86,9 @@ main.detail { display: grid; gap: 20px; min-width: 0; }
 .s-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; align-items: start; }
 .s-head .topic { margin: 6px 0 0; color: var(--muted); max-width: 62ch; }
 .s-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
-.s-figs { display: flex; flex-wrap: wrap; gap: 8px 28px; padding-top: 12px; border-top: 1px solid var(--line); }
+.s-figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.s-figs .stat { background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+.s-figs .stat b { font-size: 1.2rem; }
 
 form { display: grid; gap: 10px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -350,3 +352,46 @@ tr.stage-row td { background: var(--surface); color: var(--pubs-ink); font-size:
 .theme-switch button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
 .theme-switch.floating { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); z-index: 30; margin: 0; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
 .userbar { justify-content: flex-end; }
+
+/* ---------- top bar ---------- */
+.appbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--surface); border-bottom: 1px solid var(--line); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 21; background: var(--surface); }
+.appbar-in { max-width: 1240px; margin: 0 auto; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
+.brand-mark { width: 34px; height: 34px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-family: var(--f-display); font-weight: 600; font-size: 1.15rem; }
+.brand-text { display: grid; line-height: 1.15; }
+.brand-text b { font-family: var(--f-display); font-size: 1.05rem; font-weight: 600; }
+.brand-text span { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.appbar-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.account { display: flex; align-items: center; gap: 10px; padding-left: 14px; border-left: 1px solid var(--line); }
+.avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 600; font-size: 0.82rem; letter-spacing: 0.02em; flex: none; }
+.acct-text { display: grid; line-height: 1.2; min-width: 0; }
+.acct-text b { font-size: 0.9rem; font-weight: 600; }
+.acct-text span { font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; }
+.theme-switch.compact { margin: 0; }
+.theme-switch.compact button { padding: 4px 9px; font-size: 0; }
+.theme-switch.compact button span { font-size: 0.9rem; }
+@media (max-width: 640px) { .acct-text span { display: none; } .account { padding-left: 10px; } .brand-text span { display: none; } }
+
+/* ---------- page heading and summary figures ---------- */
+header.top { border-bottom: none; padding-bottom: 0; display: block; }
+header.top h1 { font-size: 1.85rem; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; }
+.stats:empty { display: none; }
+.stats .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; gap: 2px; }
+.stats .stat b { font-size: 1.35rem; }
+.stats .stat.alert { border-color: var(--bad); }
+.app { padding-block: 22px 64px; }
+
+/* phones: keep the top bar on one row */
+@media (max-width: 640px) {
+  .appbar-in { flex-wrap: nowrap; padding-block: 8px; }
+  .appbar-right { gap: 8px; flex-wrap: nowrap; }
+  .acct-text { display: none; }
+  .account { border-left: none; padding-left: 0; }
+  .signout { padding: 4px 8px; }
+}
+@media (max-width: 400px) { .brand-text { display: none; } }
+
+.auth-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.auth-brand h1 { font-size: 1.8rem; }
