@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1510";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1525";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -464,14 +464,17 @@ function taskCard(t) {
   const m = metrics(t), st = statusOf(t);
   const card = h("details", { class: "task" + (isDone(t) ? " done" : ""), open: S.openTasks.has(t.id), id: "task-" + t.id,
       ontoggle: e => { e.target.open ? S.openTasks.add(t.id) : S.openTasks.delete(t.id); } },
-    h("summary", { class: "has-day" },
+    // Closed: just the title and a + button. Everything else is inside.
+    h("summary", { class: "task-min", title: "Show details" },
+      h("span", { class: "t-title", text: t.title }),
+      h("span", { class: "plus", "aria-hidden": "true" })));
+  const top = h("div", { class: "task-top" },
       h("div", { class: "daybox " + (m.done ? (m.late > 0 ? "bad" : "good") : m.cls), title: m.done ? "Days taken to finish" : "Days since the task was assigned" },
         h("b", { text: m.done ? m.taken : m.elapsed }), h("span", { text: m.done ? "days taken" : "days so far" })),
       h("div", { style: "min-width:0" },
-        h("div", { class: "t-title", text: t.title }),
-        h("div", { class: "t-sub" }, statusChip(st), ownerChip(t), h("span", { text: "Assigned " + fmtD(startOf(t)) }), h("span", { text: "Due " + fmtD(t.due) }), timingChip(t)),
+        h("div", { class: "t-sub", style: "margin-top:0" }, statusChip(st), ownerChip(t), h("span", { text: "Assigned " + fmtD(startOf(t)) }), h("span", { text: "Due " + fmtD(t.due) }), timingChip(t)),
         latestFeedback(t)),
-      h("div", { class: "t-right" }, progBar(isDone(t) ? 100 : t.progress), h("span", { class: "days " + m.cls, text: m.label }), quickToggle(t))));
+      h("div", { class: "t-right" }, progBar(isDone(t) ? 100 : t.progress), h("span", { class: "days " + m.cls, text: m.label }), quickToggle(t)));
   const facts = h("dl", { class: "facts" },
     [["Status", st], ["Progress", (isDone(t) ? 100 : (t.progress || 0)) + "%"], ["Assigned", fmtD(startOf(t))], ["Due", fmtD(t.due)],
      ["Completed", isDone(t) ? fmtD(t.doneAt) : "Not yet"], [m.done ? "Days taken" : "Days elapsed", String(m.done ? m.taken : m.elapsed)],
@@ -483,7 +486,7 @@ function taskCard(t) {
         h("span", { class: "who", text: x.byName ? "by " + x.byName : "" })),
       remarkEl(x))))
     : h("p", { class: "note", text: "No updates yet." });
-  const body = h("div", { class: "t-body" }, facts,
+  const body = h("div", { class: "t-body" }, top, facts,
     t.details ? h("div", null, h("div", { class: "label", text: "Details" }), h("p", { class: "t-details", text: t.details })) : null,
     h("div", { style: "display:grid;gap:8px" }, h("div", { class: "label", text: "Progress history" }), histEl),
     S.canWrite ? editForm(t) : null);

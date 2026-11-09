@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="assets/app.css?v=20261109-1510">
+<link rel="stylesheet" href="assets/app.css?v=20261109-1525">
 </head>
 <body>
 <div class="auth-wrap">
@@ -47,7 +47,7 @@
 </div>
 
 <script type="module">
-  import { registerStudent, authMessage, configured, setupNotice } from "./assets/core.js?v=20261109-1510";
+  import { registerStudent, authMessage, configured, setupNotice } from "./assets/core.js?v=20261109-1525";
   if (!configured) setupNotice(document.getElementById("card"));
   const STAGES = ["PhD", "Masters", "B-Tech"];  // course; saved in the record as the student's course
   const $ = id => document.getElementById(id);
