@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-1510";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -970,8 +970,10 @@ export async function start(pageRole) {
     document.getElementById("joinForm").onsubmit = async e => {
       e.preventDefault(); const code = val("joinNew").trim();
       if (!/^[A-Za-z0-9]{4,12}$/.test(code)) { say("Use 4 to 12 letters or digits."); return; }
+      const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Saving…";
       const ok = await write(d => d.doc("private/join").set({ code, updatedAt: Date.now() }), "Lab code changed to " + code + ". Existing students aren't affected.");
-      if (ok) { e.target.reset(); e.target.hidden = true; }
+      btn.disabled = false; btn.textContent = "Save code";
+      if (ok) { document.getElementById("joinShow").textContent = code; e.target.reset(); e.target.hidden = true; }
     };
     const url = new URL("register.html", location.href).href;
     document.getElementById("signupUrl").textContent = url;

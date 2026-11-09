@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/app.css?v=20261109-1510">
 <style>
   .choices { display: grid; gap: 12px; }
   .choice { display: grid; gap: 4px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); text-decoration: none; }
@@ -41,8 +41,8 @@
   </div>
 </div>
 <script type="module">
-  import { configured, currentUser, isSupervisor } from "./assets/core.js";
-  import { GROUP_NAME } from "./assets/config.js";
+  import { configured, currentUser, isSupervisor } from "./assets/core.js?v=20261109-1510";
+  import { GROUP_NAME } from "./assets/config.js?v=20261109-1510";
   document.getElementById("groupName").textContent = GROUP_NAME;
   document.title = GROUP_NAME;
   // Already signed in on this browser? Go straight to the right page.
