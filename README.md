@@ -9,7 +9,7 @@ index.html              start page: "I'm a student" / "I'm the supervisor"
 student-login.html      student sign-in (admission number + secret code)
 forgot.html             "Forgot?" — emails a reset link
 reset.html              opened from the email: choose a new secret code / password
-register.html           student sign-up with the class code (starts as 67890)
+register.html           student sign-up with the class code (starts as xxxxx)
 supervisor-login.html   supervisor sign-in (email + password)
 supervisor-signup.html  supervisor sign-up, once, with the setup key
 dashboard.html      supervisor's working page
