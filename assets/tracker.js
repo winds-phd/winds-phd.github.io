@@ -1,7 +1,11 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261109-2205";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261114-1230";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
+/** Supervisor's course switch on the dashboard: "all" or one of COURSES. */
+function inScope(sid) { if (!S.course || S.course === "all") return true; const s = S.students.find(x => x.id === sid); return !!s && courseOf(s) === S.course; }
+function scopedStudents() { return S.students.filter(s => inScope(s.id)); }
+function byCourse(list) { return COURSES.map(c => [c, list.filter(s => courseOf(s) === c).sort((a, b) => a.name.localeCompare(b.name))]).filter(([, l]) => l.length); }
 const STATUSES = ["Not started", "In progress", "Under review", "Blocked", "Done"];
 const STATUS_CLASS = { "Not started": "plain", "In progress": "", "Under review": "warn", "Blocked": "bad", "Done": "good" };
 const PSTATUS = ["Currently writing", "Submitted", "Under review", "Revision", "Accepted", "Published", "Rejected"];
@@ -28,7 +32,7 @@ const PTYPES = ["Journal article", "Conference paper", "Review article", "Book c
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
-const S = { mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
+const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
 /** Wraps a form's submit handler: while it is saving, further clicks/Enter are ignored and the buttons are locked. */
 function guardSubmit(handler) {
@@ -126,14 +130,25 @@ function isStale(s) {
   if (l) return diff(l, todayStr()) > 30;
   return s.createdAt > 1e12 ? diff(localDate(s.createdAt), todayStr()) > 30 : false;
 }
+function renderCourseBar() {
+  const bar = document.getElementById("courseBar"); if (!bar) return;
+  if (!S.isOwner || !S.students.length) { bar.replaceChildren(); return; }
+  const opts = [["all", "All students", S.students.length], ...COURSES.map(c => [c, c, S.students.filter(s => courseOf(s) === c).length])];
+  if (S.course !== "all" && !opts.some(([k, , n]) => k === S.course && n)) S.course = "all";
+  bar.replaceChildren(h("span", { class: "label", text: "Showing" }),
+    h("div", { class: "seg-chips", role: "group", "aria-label": "Show students by course" }, opts.filter(([k, , n]) => k === "all" || n).map(([k, label, n]) =>
+      h("button", { type: "button", "aria-pressed": S.course === k ? "true" : "false", onclick: () => { S.course = k; try { localStorage.setItem("winds.course", k); } catch (e) {} renderAll(); } },
+        label, h("span", { class: "n", text: String(n) })))));
+}
 function renderStats() {
+  renderCourseBar();
   if (!S.isOwner) { document.getElementById("stats").replaceChildren(); return; }
-  const all = tasksOf(), open = all.filter(t => !isDone(t)), done = all.filter(isDone), od = open.filter(isOverdue);
-  const stale = S.students.filter(isStale);
+  const all = tasksOf().filter(t => inScope(t.studentId)), open = all.filter(t => !isDone(t)), done = all.filter(isDone), od = open.filter(isOverdue);
+  const stale = scopedStudents().filter(isStale);
   const avg = avgDays(all);
   document.getElementById("stats").replaceChildren(
-    stat(S.students.length, "Students"), stat(open.length, "Open tasks"), stat(od.length, "Overdue", od.length),
-    stat(done.length, "Completed"), stat(pubCounts(S.papers).draft, "Draft papers"), stat(pubCounts(S.papers).submitted, "Submitted"), stat(pubCounts(S.papers).accepted, "Accepted"), stat(avg == null ? "—" : avg + "d", "Avg. time to finish"), stat(stale.length, "Not met in 30 days", stale.length));
+    stat(scopedStudents().length, S.course === "all" ? "Students" : S.course + " students"), stat(open.length, "Open tasks"), stat(od.length, "Overdue", od.length),
+    stat(done.length, "Completed"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).draft, "Draft papers"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).submitted, "Submitted"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).accepted, "Accepted"), stat(avg == null ? "—" : avg + "d", "Avg. time to finish"), stat(stale.length, "Not met in 30 days", stale.length));
 }
 function renderRoster() {
   const items = [h("button", { class: "r-item", type: "button", "aria-current": S.sel === null ? "true" : "false", onclick: () => select(null) },
@@ -148,15 +163,18 @@ function renderRoster() {
       h("span", { class: "nm", text: "Scheduled meetings" }),
       h("span", { class: "meta", text: (() => { const n = upcomingSched().length; return n ? plural(n, "upcoming meeting") : "Plan group or individual meetings"; })() })),
     h("div", { class: "roster-sep label", text: "Students" })];
-  for (const s of [...S.students].sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const [course, list] of byCourse(S.students)) {
+  items.push(h("div", { class: "course-head" }, h("span", { text: course }), h("span", { class: "mono", text: String(list.length) })));
+  for (const s of list) {
     const l = lastMeeting(s.id), mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), od = open.filter(isOverdue).length;
     items.push(h("button", { class: "r-item", type: "button", "aria-current": S.sel === s.id ? "true" : "false", onclick: () => select(s.id) },
       h("span", { class: "nm", text: s.name }),
-      h("span", { class: "meta", text: (s.admissionNo ? s.admissionNo + " · " : "") + courseOf(s) }),
+      h("span", { class: "meta", text: s.admissionNo || "" }),
       h("span", { class: "meta" },
         h("span", { text: l ? "Met " + (diff(l, todayStr()) === 0 ? "today" : diff(l, todayStr()) + "d ago") : "No meetings yet" }),
         h("span", { text: open.length + " open · " + (mine.length - open.length) + " done" }),
         od ? h("span", { class: "chip bad", text: od + " overdue" }) : null)));
+  }
   }
   document.getElementById("roster").replaceChildren(...items);
 }
@@ -172,7 +190,25 @@ function renderOverview() {
       h("p", null, "Send students the sign-up link and the lab code shown on the left. Each student creates their own account with their admission number and a password, and appears here straight away.")));
     return;
   }
-  const open = tasksOf().filter(t => !isDone(t)).sort(sortTasks);
+  const studs = scopedStudents();
+  const studentsPanel = h("section", { class: "panel" },
+    h("div", { class: "panel-head" }, h("h3", { text: S.course === "all" ? "Students by course" : S.course + " students" }), h("span", { class: "muted", text: plural(studs.length, "student") })),
+    ...byCourse(studs).map(([course, list]) => h("div", { class: "course-block" },
+      S.course === "all" ? h("div", { class: "task-group course-group" }, h("span", { text: course }), h("span", { class: "mono", text: String(list.length) })) : null,
+      h("div", { class: "table-wrap" }, h("table", null,
+        h("thead", null, h("tr", null, ["Student", "Adm. no.", "Current tasks", "Overdue", "Completed", "Papers (D / S / A)", "Last meeting"].map(x => h("th", { text: x })))),
+        h("tbody", null, list.map(s => {
+          const mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), od = open.filter(isOverdue).length, pc = pubCounts(papersOf(s.id)), l = lastMeeting(s.id);
+          return h("tr", null,
+            h("td", null, h("button", { class: "linkish", type: "button", text: s.name, onclick: () => select(s.id) })),
+            h("td", { class: "num", text: s.admissionNo || "—" }),
+            h("td", { class: "num", text: String(open.length) }),
+            h("td", null, od ? h("span", { class: "chip bad", text: String(od) }) : h("span", { class: "muted", text: "0" })),
+            h("td", { class: "num", text: String(mine.length - open.length) }),
+            h("td", { class: "num", text: pc.draft + " / " + pc.submitted + " / " + pc.accepted }),
+            h("td", null, l ? h("span", { class: isStale(s) ? "chip warn" : "", text: fmtD(l) }) : h("span", { class: "muted", text: "None yet" })));
+        })))))));
+  const open = tasksOf().filter(t => !isDone(t) && inScope(t.studentId)).sort(sortTasks);
   const openPanel = h("section", { class: "panel sec-tasks" },
     h("div", { class: "panel-head" }, h("h3", { text: "Open tasks across the group" }), h("span", { class: "muted", text: open.length + " open" })),
     open.length ? h("div", { class: "table-wrap" }, h("table", null,
@@ -182,9 +218,9 @@ function renderOverview() {
         h("td", { text: t.title }), h("td", null, statusChip(statusOf(t))), h("td", null, progBar(t.progress)),
         h("td", { class: "num", text: fmtD(startOf(t)) }), h("td", { class: "num", text: m.elapsed }), h("td", null, timingChip(t))); }))))
       : h("p", { class: "note", text: "No current tasks." }));
-  const done = tasksOf().filter(t => isDone(t)).sort((a, b) => (doneDateOf(b) || "").localeCompare(doneDateOf(a) || "")).slice(0, 12);
+  const done = tasksOf().filter(t => isDone(t) && inScope(t.studentId)).sort((a, b) => (doneDateOf(b) || "").localeCompare(doneDateOf(a) || "")).slice(0, 12);
   const donePanel = h("section", { class: "panel sec-tasks" },
-    h("div", { class: "panel-head" }, h("h3", { text: "Recently completed" }), h("span", { class: "muted", text: avgDays(tasksOf()) == null ? "" : "Average " + plural(avgDays(tasksOf()), "day") + " to finish" })),
+    h("div", { class: "panel-head" }, h("h3", { text: "Recently completed" }), h("span", { class: "muted", text: avgDays(tasksOf().filter(t => inScope(t.studentId))) == null ? "" : "Average " + plural(avgDays(tasksOf().filter(t => inScope(t.studentId))), "day") + " to finish" })),
     done.length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Student", "Task", "Assigned", "Finished", "Days taken", "Against due date"].map(x => h("th", { text: x })))),
       h("tbody", null, done.map(t => { const m = metrics(t); return h("tr", null,
@@ -192,16 +228,16 @@ function renderOverview() {
         h("td", { text: t.title }), h("td", { class: "num", text: fmtD(startOf(t)) }), h("td", { class: "num", text: fmtD(doneDateOf(t)) }),
         h("td", { class: "num", text: m.taken == null ? "—" : String(m.taken) }), h("td", null, timingChip(t))); }))))
       : h("p", { class: "note", text: "Completed tasks will appear here with the number of days each one took." }));
-  const recent = [...S.meetings].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 6);
+  const recent = S.meetings.filter(m => inScope(m.studentId)).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 6);
   const meetPanel = h("section", { class: "panel sec-meet" },
     h("div", { class: "panel-head" }, h("h3", { text: "Recent meetings" })),
     recent.length ? h("ul", { class: "meetings" }, recent.map(m => h("li", { class: "meeting" },
       h("div", { class: "m-top" }, h("button", { class: "linkish", type: "button", text: studentName(m.studentId), onclick: () => select(m.studentId) }), h("span", { class: "m-date", text: fmtD(m.date) })),
       h("p", { class: "note", text: plural((m.updates || []).length, "task update") + " · " + plural((m.newTasks || []).length, "new task") + (m.notes ? " · " + (m.notes.length > 140 ? m.notes.slice(0, 140) + "…" : m.notes) : "") }))))
       : h("p", { class: "note", text: "No meetings recorded yet. Open a student on the left to record one." }));
-  const pp = [...S.papers].sort((a, b) => stageOf(a) - stageOf(b) || studentName(a.studentId).localeCompare(studentName(b.studentId)));
+  const pp = S.papers.filter(p => inScope(p.studentId)).sort((a, b) => stageOf(a) - stageOf(b) || studentName(a.studentId).localeCompare(studentName(b.studentId)));
   const papPanel = h("section", { class: "panel sec-pubs" },
-    h("div", { class: "panel-head" }, h("h3", { text: "Publications" }), pubCounters(S.papers)),
+    h("div", { class: "panel-head" }, h("h3", { text: "Publications" }), pubCounters(pp)),
     pp.length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Student", "Paper", "Venue", "Status", "Review time", "Overleaf"].map(x => h("th", { text: x })))),
       h("tbody", null, pp.flatMap((p, i) => { const m = pMetrics(p);
@@ -213,7 +249,7 @@ function renderOverview() {
         h("td", null, pChip(pStatus(p))), h("td", { class: "num", text: m.review == null ? "—" : m.review + "d" }),
         h("td", null, p.overleaf ? h("a", { class: "ext", href: p.overleaf, target: "_blank", rel: "noopener", text: "Overleaf ↗" }) : h("span", { class: "muted", text: "—" })))]; }))))
       : h("p", { class: "note", text: "Papers added on a student's Publications tab appear here with their status and review time." }));
-  d.replaceChildren(...[todayPanel(), openPanel, papPanel, donePanel, meetPanel].filter(Boolean));
+  d.replaceChildren(...[todayPanel(), studentsPanel, openPanel, papPanel, donePanel, meetPanel].filter(Boolean));
 }
 
 /* ---------- publications ---------- */
@@ -749,37 +785,75 @@ function confItem(c) {
 function nowKey() { const d = new Date(); return todayStr() + "T" + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
 function schedKey(x) { return (x.date || "") + "T" + (x.time || "23:59"); }
 /** One entry per meeting (the copies share a groupId); optionally only those that include one student. */
+/* Recurring meetings: one record per student per series (repeat, until, skip[]); occurrences are worked out from the first date. */
+const REPEATS = [["none", "Does not repeat"], ["weekly", "Every week"], ["biweekly", "Every 2 weeks"], ["monthly", "Every month (same date)"]];
+function addDaysStr(d, n) { const [y, m, dd] = d.split("-").map(Number); return new Date(Date.UTC(y, m - 1, dd + n)).toISOString().slice(0, 10); }
+function addMonthsStr(d, n) { const [y, m, dd] = d.split("-").map(Number); const t = new Date(Date.UTC(y, m - 1 + n, 1)); const last = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate(); t.setUTCDate(Math.min(dd, last)); return t.toISOString().slice(0, 10); }
+function isRecurring(x) { return !!x.repeat && x.repeat !== "none"; }
+function nthOcc(x, i) { const start = x.startDate || x.date; return x.repeat === "monthly" ? addMonthsStr(start, i) : addDaysStr(start, i * (x.repeat === "biweekly" ? 14 : 7)); }
+/** First occurrence at or after fromKey ("YYYY-MM-DDTHH:MM"), or null when the series has ended. */
+function nextOcc(x, fromKey) {
+  if (!isRecurring(x)) return (x.date + "T" + (x.time || "23:59")) >= fromKey ? x.date : null;
+  const skip = new Set(x.skip || []);
+  for (let i = 0; i < 800; i++) { const d = nthOcc(x, i); if (x.until && d > x.until) return null; if (skip.has(d)) continue; if (d + "T" + (x.time || "23:59") >= fromKey) return d; }
+  return null;
+}
+function lastOcc(x, beforeKey) {
+  if (!isRecurring(x)) return x.date;
+  const skip = new Set(x.skip || []); let last = null;
+  for (let i = 0; i < 800; i++) { const d = nthOcc(x, i); if ((x.until && d > x.until) || d + "T" + (x.time || "23:59") >= beforeKey) break; if (!skip.has(d)) last = d; }
+  return last || x.startDate || x.date;
+}
+function ordinal(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+function repeatText(x) {
+  if (!isRecurring(x)) return "";
+  const start = x.startDate || x.date, wd = parseD(start).toLocaleDateString("en-IN", { weekday: "long" });
+  const base = x.repeat === "weekly" ? "Every week on " + wd : x.repeat === "biweekly" ? "Every 2 weeks on " + wd : "Every month on the " + ordinal(parseD(start).getDate());
+  return base + (x.until ? ", until " + fmtD(x.until) : "");
+}
+/** One entry per meeting (copies share a groupId). A series shows as its next occurrence (or its last one once it has ended). */
 function allSched(sid) {
-  const by = new Map();
+  const by = new Map(), now = nowKey();
   for (const x of S.schedule || []) { if (sid && x.studentId !== sid) continue; const k = x.groupId || x.id; if (!by.has(k)) by.set(k, { ...x, copies: [] }); by.get(k).copies.push(x); }
-  return [...by.values()].sort((a, b) => schedKey(a).localeCompare(schedKey(b)));
+  return [...by.values()].map(x => {
+    if (!isRecurring(x)) return x;
+    const nd = nextOcc(x, now);
+    return { ...x, startDate: x.date, date: nd || lastOcc(x, now) };
+  }).sort((a, b) => schedKey(a).localeCompare(schedKey(b)));
 }
 function upcomingSched(sid) { const now = nowKey(); return allSched(sid).filter(x => schedKey(x) >= now); }
 function fmtTime(t) { if (!t) return ""; const [hh, mm] = t.split(":").map(Number); const ap = hh >= 12 ? "PM" : "AM"; return ((hh % 12) || 12) + ":" + String(mm).padStart(2, "0") + " " + ap; }
 function whenText(x) { const d = diff(todayStr(), x.date); return (d === 0 ? "Today" : d === 1 ? "Tomorrow" : parseD(x.date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })) + (x.time ? ", " + fmtTime(x.time) : ""); }
 function nextBanner(x) {
   return h("div", { class: "next-meet" },
-    h("div", null, h("div", { class: "label", text: "Next meeting" + (x.kind === "group" ? " · group" : "") }), h("b", { text: whenText(x) }), x.agenda ? h("div", { class: "ref-note", text: x.agenda.split("\n")[0] }) : null),
+    h("div", null, h("div", { class: "label", text: "Next meeting" + (x.kind === "group" ? " · group" : "") + (isRecurring(x) ? " · repeats" : "") }), h("b", { text: whenText(x) }), x.agenda ? h("div", { class: "ref-note", text: x.agenda.split("\n")[0] }) : null),
     x.link ? h("a", { class: "btn small", href: x.link, target: "_blank", rel: "noopener", text: "Join ↗" }) : null);
 }
 function schedItem(x, showPeople) {
   const names = (x.attendees || []).map(k => studentName(k));
-  let armed = null;
-  const cancel = S.isOwner ? h("button", { class: "x", type: "button", text: "Cancel meeting" }) : null;
-  if (cancel) cancel.onclick = () => {
-    if (!armed) { cancel.textContent = "Confirm cancel"; armed = setTimeout(() => { armed = null; cancel.textContent = "Cancel meeting"; }, 4000); return; }
-    clearTimeout(armed);
-    write(async db => { for (const c of x.copies) await db.doc("students/" + c.studentId + "/schedule/" + c.id).delete(); }, "Meeting cancelled");
+  const rec = isRecurring(x), upcoming = schedKey(x) >= nowKey();
+  const confirmBtn = (label, run) => {
+    let armed = null; const b = h("button", { class: "x", type: "button", text: label });
+    b.onclick = () => { if (!armed) { b.textContent = "Confirm: " + label.toLowerCase(); armed = setTimeout(() => { armed = null; b.textContent = label; }, 4000); return; } clearTimeout(armed); run(); };
+    return b;
   };
+  const removeAll = msg => write(async db => { for (const c of x.copies) await db.doc("students/" + c.studentId + "/schedule/" + c.id).delete(); }, msg);
+  const cancel = !S.isOwner ? null
+    : rec && upcoming ? h("div", { style: "display:grid;gap:2px;justify-items:end" },
+        confirmBtn("Cancel this one", () => write(async db => { for (const c of x.copies) await db.doc("students/" + c.studentId + "/schedule/" + c.id).update({ skip: [...new Set([...(c.skip || []), x.date])] }); }, "Cancelled the meeting on " + fmtD(x.date) + ". The series continues.")),
+        confirmBtn("Cancel series", () => removeAll("Recurring meeting cancelled")))
+    : confirmBtn(rec ? "Remove series" : "Cancel meeting", () => removeAll(rec ? "Series removed" : "Meeting cancelled"));
   const d = diff(todayStr(), x.date);
   return h("li", { class: "ref sched" + (schedKey(x) < nowKey() ? " past" : "") },
     h("div", { class: "conf-date sched-date" }, h("b", { text: parseD(x.date).getDate() }), h("span", { text: parseD(x.date).toLocaleDateString("en-IN", { month: "short" }) + (x.time ? " · " + fmtTime(x.time) : "") })),
     h("div", { style: "min-width:0;flex:1" },
       h("div", { class: "t-sub", style: "margin-top:0" }, h("span", { class: "chip " + (x.kind === "group" ? "" : "plain"), text: x.kind === "group" ? "Group meeting" : "Individual meeting" }),
+        rec ? h("span", { class: "chip repeat", text: "↻ " + (x.repeat === "weekly" ? "Weekly" : x.repeat === "biweekly" ? "Every 2 weeks" : "Monthly") }) : null,
         d >= 0 && d <= 1 ? h("span", { class: "chip warn", text: d === 0 ? "Today" : "Tomorrow" }) : null,
         x.location ? h("span", { class: "who", text: x.location }) : null),
+      rec ? h("div", { class: "who", text: repeatText(x) + (upcoming ? " · next: " + whenText(x) : " · ended") }) : null,
       x.agenda ? h("p", { class: "sched-agenda", text: x.agenda }) : h("p", { class: "note", text: "No agenda given." }),
-      showPeople ? h("div", { class: "who", text: "With: " + (x.everyone ? "all students" : names.join(", ")) }) : null),
+      showPeople ? h("div", { class: "who", text: "With: " + (x.audience || (x.everyone ? "all students" : names.join(", "))) }) : null),
     h("div", { style: "display:grid;gap:6px;justify-items:end" },
       x.link ? h("a", { class: "btn small", href: x.link, target: "_blank", rel: "noopener", text: "Join ↗" }) : null, cancel));
 }
@@ -880,22 +954,33 @@ function schedPage() {
       const k = kind.value, date = val("ns-date"), time = val("ns-time"), agenda = val("ns-agenda").trim(), location = val("ns-loc").trim();
       let link = val("ns-link").trim(); if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
       const everyone = k === "group" && document.getElementById("ns-all").checked;
-      const people = k === "individual" ? [val("ns-one")].filter(Boolean) : everyone ? S.students.map(s => s.id) : [...document.querySelectorAll("#ns-people input:checked")].map(i => i.value);
+      const people = k === "individual" ? [val("ns-one")].filter(Boolean) : everyone ? S.students.map(s => s.id) : [...document.querySelectorAll("#ns-people input[data-sid]:checked")].map(i => i.value);
+      const repeat = val("ns-repeat") || "none", until = repeat === "none" ? "" : val("ns-until");
       if (!date || !time) { say("Choose the date and time."); return; }
       if (date + "T" + time < nowKey()) { say("That time has already passed. Check the date and time."); return; }
       if (!people.length) { say(k === "individual" ? "Choose the student." : "Choose at least one student, or tick All students."); return; }
       if (k === "group" && !everyone && people.length < 2) { say("A group meeting needs two or more students. Use Individual for one student."); return; }
+      if (until && until < date) { say("The repeat end date can't be before the first meeting."); return; }
+      // a readable "With:" label for the whole group
+      let audience = "";
+      if (k === "group") {
+        if (everyone) audience = "all students";
+        else { const set = new Set(people); const c = COURSES.find(c => { const ids = S.students.filter(s => courseOf(s) === c).map(s => s.id); return ids.length && ids.length === set.size && ids.every(id => set.has(id)); }); if (c) audience = "all " + c + " students"; }
+      }
       const groupId = "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      const data = { groupId, kind: k, everyone, attendees: people, date, time, agenda, link, location, createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole };
+      const data = { groupId, kind: k, everyone, audience, attendees: people, date, time, repeat, until, skip: [], agenda, link, location, createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole };
       const ok = await write(async db => { for (const sid of people) await db.doc("students/" + sid + "/schedule/" + groupId).set({ ...data, studentId: sid }); },
-        (k === "group" ? "Group meeting" : "Meeting") + " scheduled. " + (people.length === 1 ? "The student sees it" : plural(people.length, "student") + " see it") + " on their page.");
-      if (ok) { ["ns-agenda", "ns-link", "ns-loc", "ns-time"].forEach(id => document.getElementById(id).value = ""); }
+        (repeat === "none" ? "" : "Recurring ") + (k === "group" ? "group meeting" : "meeting").replace(/^./, c => repeat === "none" ? c.toUpperCase() : c) + " scheduled. " + (people.length === 1 ? "The student sees it" : plural(people.length, "student") + " see it") + " on their page.");
+      if (ok) { ["ns-agenda", "ns-link", "ns-loc", "ns-time", "ns-until"].forEach(id => document.getElementById(id).value = ""); document.getElementById("ns-repeat").value = "none"; document.getElementById("ns-until-wrap").hidden = true; }
     } },
     h("h4", { text: "Schedule a meeting" }),
     h("div", { class: "row" },
       h("label", { class: "fieldlabel" }, "Meeting type", kind),
       h("label", { class: "fieldlabel" }, "Date", h("input", { id: "ns-date", type: "date", value: todayStr() })),
       h("label", { class: "fieldlabel" }, "Time", h("input", { id: "ns-time", type: "time" }))),
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "Repeats", h("select", { id: "ns-repeat", onchange: e => { document.getElementById("ns-until-wrap").hidden = e.target.value === "none"; } }, REPEATS.map(([v, l]) => h("option", { value: v, text: l })))),
+      h("label", { class: "fieldlabel", id: "ns-until-wrap", hidden: true }, "Until (optional; leave empty to keep repeating)", h("input", { id: "ns-until", type: "date" }))),
     h("div", { id: "ns-who" }),
     h("label", { class: "fieldlabel" }, "Agenda", h("textarea", { id: "ns-agenda", rows: "3", maxlength: "2000", placeholder: "1. Progress on chapter 3\n2. Conference submission plan\n3. Any other business" })),
     h("div", { class: "row" },
@@ -916,11 +1001,17 @@ function refreshPicker() {
   if (box.dataset.sig === kind + "|" + studs.map(s => s.id).join(",")) return;
   box.dataset.sig = kind + "|" + studs.map(s => s.id).join(",");
   if (!studs.length) { box.replaceChildren(h("p", { class: "note", text: "No students yet. They appear here once they register." })); return; }
-  if (kind === "individual") { box.replaceChildren(h("label", { class: "fieldlabel" }, "Student", h("select", { id: "ns-one" }, studs.map(s => h("option", { value: s.id, text: s.name + (s.admissionNo ? " (" + s.admissionNo + ")" : "") }))))); return; }
+  if (kind === "individual") { box.replaceChildren(h("label", { class: "fieldlabel" }, "Student", h("select", { id: "ns-one" }, byCourse(studs).map(([course, list]) => h("optgroup", { label: course }, list.map(s => h("option", { value: s.id, text: s.name + (s.admissionNo ? " (" + s.admissionNo + ")" : "") }))))))); return; }
   const all = h("input", { type: "checkbox", id: "ns-all", checked: true, onchange: e => { box.querySelector("#ns-people").hidden = e.target.checked; } });
+  const groups = byCourse(studs).map(([course, list]) => {
+    const head = h("input", { type: "checkbox", "data-course": course, onchange: e => { box.querySelectorAll('input[data-sid][data-c="' + course + '"]').forEach(i => { i.checked = e.target.checked; }); } });
+    const boxes = list.map(s => h("label", { class: "check" }, h("input", { type: "checkbox", value: s.id, "data-sid": "1", "data-c": course, onchange: () => {
+      const mine = [...box.querySelectorAll('input[data-sid][data-c="' + course + '"]')]; head.checked = mine.every(i => i.checked); head.indeterminate = !head.checked && mine.some(i => i.checked); } }), " " + s.name));
+    return h("div", { class: "pick-course" }, h("label", { class: "check pick-head" }, head, " All " + course + " (" + list.length + ")"), h("div", { class: "people" }, boxes));
+  });
   box.replaceChildren(h("div", { class: "fieldlabel" }, "Students",
     h("label", { class: "check" }, all, " All students (" + studs.length + ")"),
-    h("div", { id: "ns-people", class: "people", hidden: true }, studs.map(s => h("label", { class: "check" }, h("input", { type: "checkbox", value: s.id }), " " + s.name)))));
+    h("div", { id: "ns-people", hidden: true }, groups)));
 }
 function refreshSched() {
   const list = document.getElementById("sched-list"); if (!list) return;
@@ -1094,6 +1185,7 @@ export async function start(pageRole) {
   if (pageRole === "supervisor" && !sup) { location.href = "student.html"; return; }
   if (pageRole === "student" && sup) { location.href = "dashboard.html"; return; }
   S.db = db; S.uid = user.uid; S.isOwner = sup;
+  try { const c = localStorage.getItem("winds.course"); if (c && (c === "all" || COURSES.includes(c))) S.course = c; } catch (e) { /* default: all */ }
   S.myName = sup ? "Supervisor" : (user.displayName || "Student"); S.myRole = sup ? "supervisor" : "student";
   showAccount(sup ? (user.displayName && user.displayName !== "Supervisor" ? user.displayName : "Supervisor") : (user.displayName || "Student"), sup ? "Supervisor · " + user.email : "Student");
   S.timer = setTimeout(() => { if (S.loaded < NCOLL) { const n = document.getElementById("loadnote"); if (n) n.textContent = "Can't reach the saved records yet. They'll appear when the connection returns."; } }, 10000);

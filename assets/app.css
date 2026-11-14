@@ -395,3 +395,21 @@ header.top h1 { font-size: 1.85rem; }
 
 .auth-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .auth-brand h1 { font-size: 1.8rem; }
+
+/* ---------- course grouping ---------- */
+.course-head { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 12px 2px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; color: var(--accent); border-bottom: 1px solid var(--line); margin: 0 4px 2px; }
+.course-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.course-bar:empty { display: none; }
+.seg-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.seg-chips button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 5px 12px; font-size: 0.86rem; font-weight: 500; display: inline-flex; align-items: center; gap: 8px; }
+.seg-chips button .n { font-family: var(--f-mono); font-size: 0.75rem; color: var(--muted); }
+.seg-chips button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.seg-chips button[aria-pressed="true"] .n { color: var(--on-accent); opacity: 0.85; }
+.course-block { display: grid; gap: 4px; }
+.course-block + .course-block { margin-top: 8px; }
+.course-group { color: var(--accent); border-bottom-color: var(--line); }
+
+.chip.repeat { background: var(--meet-bg); color: var(--meet-ink); border: 1px solid var(--meet-line); }
+.pick-course { display: grid; gap: 2px; padding: 6px 0; border-top: 1px dashed var(--line); }
+.pick-head { font-weight: 600; }
+.course-head, .course-group { text-transform: none; letter-spacing: 0.01em; font-size: 0.86rem; }

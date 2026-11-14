@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="assets/app.css?v=20261109-2205">
-<script src="assets/theme.js?v=20261109-2205"></script>
+<link rel="stylesheet" href="assets/app.css?v=20261114-1230">
+<script src="assets/theme.js?v=20261114-1230"></script>
 </head>
 <body>
 <header class="appbar">
@@ -35,6 +35,7 @@
       <p id="page-sub">Tasks, papers and meetings for every student in the lab. Each student sees only their own.</p>
     </div>
   </header>
+  <div class="course-bar" id="courseBar"></div>
   <div class="stats" id="stats"></div>
   <div class="layout">
     <aside class="roster">
@@ -58,7 +59,7 @@
   if (location.protocol === "file:") document.getElementById("detail").innerHTML = '<div class="empty"><h3>Open the website address</h3><p>This page was opened as a file. Open your GitHub Pages address (https://YOUR-NAME.github.io/REPO/) instead.</p></div>';
 </script>
 <script type="module">
-  import { start } from "./assets/tracker.js?v=20261109-2205";
+  import { start } from "./assets/tracker.js?v=20261114-1230";
   start("supervisor");
 </script>
 </body>
