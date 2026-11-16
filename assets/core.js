@@ -1,6 +1,6 @@
 // Talks to the Google Apps Script backend (data lives in a Google Sheet in the supervisor's Drive).
 // Provides sign-in helpers and a small live data layer used by every page.
-import { API_URL } from "./config.js?v=20261114-1230";
+import { API_URL } from "./config.js?v=20261117-1100";
 
 export const configured = !String(API_URL).startsWith("PASTE_") && /^https:\/\//.test(API_URL);
 const TOKEN_KEY = "phdlog.token";
@@ -46,6 +46,9 @@ export function authMessage(e) { return (e && e.message) || "Something went wron
 const cache = new Map();
 let rev = null, synced = false, syncing = null, pollTimer = null;
 const watchers = new Set();
+const activityFns = new Set();
+/** Called after each fresh sync with the latest changes made by other people (newest first). */
+export function onActivity(fn) { activityFns.add(fn); return () => activityFns.delete(fn); }
 const POLL_MS = 10000;
 
 function emit() { for (const w of watchers) w.check(); }
@@ -55,7 +58,7 @@ async function sync() {
   syncing = (async () => {
     try {
       const j = await call("sync", { rev });
-      if (!j.unchanged) { cache.clear(); for (const d of j.docs) cache.set(d.path, d.data); rev = j.rev; applyPending(); }
+      if (!j.unchanged) { cache.clear(); for (const d of j.docs) cache.set(d.path, d.data); rev = j.rev; applyPending(); if (Array.isArray(j.activity)) for (const f of activityFns) { try { f(j.activity); } catch (e) { console.error(e); } } }
       synced = true;
       for (const w of watchers) w.ok();
       emit();

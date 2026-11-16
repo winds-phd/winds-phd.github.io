@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret } from "./core.js?v=20261114-1230";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity } from "./core.js?v=20261117-1100";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -1176,6 +1176,84 @@ function showAccount(name, role) {
   const w = String(name).trim().split(/\s+/), titled = /^(dr|prof)\.?$/i.test(w[0]) && w.length > 1;
   document.getElementById("page-title").textContent = part + ", " + (titled ? w[0] + " " + w[w.length - 1] : w[0]);
 }
+/* ---------- notification bell: changes made by the other side ---------- */
+const B = { items: [], seen: 0, shown: new Set(), key: "", first: true, baseTitle: document.title };
+function bellLoad() { try { B.seen = Number(localStorage.getItem(B.key)) || 0; } catch (e) { B.seen = 0; } }
+function bellSave() { try { localStorage.setItem(B.key, String(B.seen)); } catch (e) { /* this browser won't remember; fine */ } }
+function ago(ts) {
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 1) return "just now"; if (m < 60) return m + " min ago";
+  const hrs = Math.round(m / 60); if (hrs < 24) return hrs + " h ago";
+  const d = Math.round(hrs / 24); if (d < 7) return d + (d === 1 ? " day ago" : " days ago");
+  return new Date(ts).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+function bellUnread() { return B.items.filter(e => e.ts > B.seen); }
+function bellRender() {
+  const n = bellUnread().length, cnt = document.getElementById("bellCount");
+  if (!cnt) return;
+  cnt.textContent = n > 9 ? "9+" : String(n); cnt.hidden = !n;
+  document.getElementById("bellBtn").setAttribute("aria-label", n ? n + " new notifications" : "Notifications");
+  document.title = (n ? "(" + n + ") " : "") + B.baseTitle;
+  const list = document.getElementById("bellList");
+  if (!B.items.length) list.replaceChildren(h("li", { class: "bell-empty", text: S.isOwner ? "No changes from students yet. When a student adds or updates something, it shows up here." : "Nothing new. When your supervisor gives feedback, adds a task or schedules a meeting, it shows up here." }));
+  else list.replaceChildren(...B.items.slice(0, 40).map(e => {
+    const who = S.isOwner && e.student ? (S.students.find(x => x.id === e.student) || {}).name : "";
+    return h("li", {}, h("button", { type: "button", class: "bell-item" + (e.ts > B.seen ? " unread" : ""), onclick: () => bellOpen(e) },
+      h("span", { class: "bell-text", text: e.text }),
+      h("span", { class: "bell-meta", text: ago(e.ts) + (who && e.text.indexOf(who) < 0 ? " · " + who : "") })));
+  }));
+  const foot = document.getElementById("bellFoot");
+  if ("Notification" in window && Notification.permission === "default") foot.replaceChildren(h("button", { type: "button", class: "btn ghost small", text: "Turn on desktop alerts", onclick: async () => { try { await Notification.requestPermission(); } catch (e) { /* ignored */ } bellRender(); say(Notification.permission === "granted" ? "Desktop alerts are on while this site is open in a tab." : "Desktop alerts stay off. You'll still see the bell."); } }));
+  else if ("Notification" in window && Notification.permission === "granted") foot.replaceChildren(h("span", { class: "note", text: "Desktop alerts are on while this site is open in a tab. Emails still arrive for feedback, meetings and due dates." }));
+  else foot.replaceChildren(h("span", { class: "note", text: "Desktop alerts are blocked in this browser's site settings." }));
+}
+function bellToggle(open) {
+  const p = document.getElementById("bellPanel"), btn = document.getElementById("bellBtn");
+  const willOpen = open === undefined ? p.hidden : open;
+  p.hidden = !willOpen; btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  if (willOpen) bellRender();
+}
+function bellMarkRead() { if (B.items.length) B.seen = Math.max(B.seen, B.items[0].ts); bellSave(); bellRender(); }
+function bellOpen(e) {
+  if (e.ts > B.seen) { B.seen = Math.max(B.seen, e.ts); bellSave(); }
+  bellToggle(false); bellRender();
+  if (e.tab === "confs") { if (S.isOwner) select("__confs"); else { S.tab = "confs"; select(S.sel); } return; }
+  if (S.isOwner) { if (!e.student || !S.students.some(x => x.id === e.student)) { select(null); return; } S.tab = e.tab || "tasks"; select(e.student); }
+  else { S.tab = e.tab || "tasks"; select(S.sel); }
+}
+function bellIncoming(list) {
+  B.items = list.slice().sort((a, b) => b.ts - a.ts);
+  if (B.first) {                                   // first load in this browser: don't flood with old changes
+    B.first = false;
+    if (!B.seen) { B.seen = B.items.length ? B.items[0].ts : Date.now(); bellSave(); }
+    B.items.forEach(e => B.shown.add(e.ts + e.text));
+    bellRender(); return;
+  }
+  const fresh = B.items.filter(e => e.ts > B.seen && !B.shown.has(e.ts + e.text));
+  fresh.forEach(e => B.shown.add(e.ts + e.text));
+  bellRender();
+  if (!fresh.length) return;
+  say(fresh.length === 1 ? "🔔 " + fresh[0].text : "🔔 " + fresh.length + " new updates. Open the bell to see them.");
+  if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
+    try {
+      const n = new Notification(fresh.length === 1 ? "WiNDS Lab Research Tracking" : fresh.length + " new updates · WiNDS Lab", { body: fresh[0].text, tag: "winds-activity", icon: "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1f5f8b"/><text x="32" y="44" font-size="34" text-anchor="middle" fill="#fff" font-family="Georgia">W</text></svg>') });
+      n.onclick = () => { window.focus(); bellOpen(fresh[0]); n.close(); };
+    } catch (e) { /* some browsers only allow this from a service worker */ }
+  }
+}
+function bellInit(user) {
+  B.key = "winds.seen." + (user.uid || user.email || user.key || "me");
+  bellLoad();
+  document.getElementById("bellBtn").onclick = ev => { ev.stopPropagation(); bellToggle(); };
+  document.getElementById("bellRead").onclick = () => bellMarkRead();
+  document.getElementById("bellPanel").addEventListener("click", ev => ev.stopPropagation());
+  document.addEventListener("click", () => { const p = document.getElementById("bellPanel"); if (p && !p.hidden) bellToggle(false); });
+  document.addEventListener("keydown", ev => { if (ev.key === "Escape") { const p = document.getElementById("bellPanel"); if (p && !p.hidden) { bellToggle(false); document.getElementById("bellBtn").focus(); } } });
+  setInterval(() => { if (!document.getElementById("bellPanel").hidden) bellRender(); }, 60000);   // keep "5 min ago" current
+  onActivity(bellIncoming);
+  bellRender();
+}
+
 export async function start(pageRole) {
   document.getElementById("signOutBtn").onclick = () => signOut();
   if (!configured) { S.loaded = NCOLL; setupNotice(document.getElementById("detail")); return; }
@@ -1185,6 +1263,7 @@ export async function start(pageRole) {
   if (pageRole === "supervisor" && !sup) { location.href = "student.html"; return; }
   if (pageRole === "student" && sup) { location.href = "dashboard.html"; return; }
   S.db = db; S.uid = user.uid; S.isOwner = sup;
+  if (document.getElementById("bellBtn")) bellInit(user);
   try { const c = localStorage.getItem("winds.course"); if (c && (c === "all" || COURSES.includes(c))) S.course = c; } catch (e) { /* default: all */ }
   S.myName = sup ? "Supervisor" : (user.displayName || "Student"); S.myRole = sup ? "supervisor" : "student";
   showAccount(sup ? (user.displayName && user.displayName !== "Supervisor" ? user.displayName : "Supervisor") : (user.displayName || "Student"), sup ? "Supervisor · " + user.email : "Student");

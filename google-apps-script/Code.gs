@@ -144,6 +144,8 @@ function dispatch_(action, req) {
           name: name, email: email, admissionNo: adm.toUpperCase().slice(0, 40), topic: String(req.topic || "").trim().slice(0, 200),
           year: String(req.year || "").slice(0, 4), stage: String(req.stage || "").slice(0, 60), createdAt: Date.now()
         });
+        safely_(() => logActivity_({ actor: login, actorName: name, role: "student", student: key, scope: "student", tab: "",
+          text: name + " joined the lab (" + (String(req.stage || "") || "PhD") + ", " + adm.toUpperCase() + ")" }));
         bumpRev_();
       }
       return newSession_(findUser_(login));
@@ -205,7 +207,8 @@ function dispatch_(action, req) {
       const rev = currentRev_();
       if (req.rev && req.rev === rev) return { unchanged: true, rev: rev };
       const docs = loadDocs_().list.filter(d => canSee_(u, d.path.split("/")));
-      return { rev: rev, docs: docs.map(d => ({ path: d.path, data: d.data })) };
+      let activity = []; try { activity = readActivity_(u); } catch (e) { console.error(e); }
+      return { rev: rev, docs: docs.map(d => ({ path: d.path, data: d.data })), activity: activity };
     }
 
     case "get": {
@@ -225,6 +228,7 @@ function dispatch_(action, req) {
       if (action === "update") { if (!cur) fail_("not-found", "That record no longer exists."); data = Object.assign({}, cur, data); }
       putDoc_(path, data); const rev = bumpRev_();
       if (u.role === "supervisor" && segs[0] === "students" && segs.length === 4 && (segs[2] === "tasks" || segs[2] === "papers")) safely_(() => notifyFeedback_(segs[1], segs[2], cur, data));
+      safely_(() => logChange_(u, cur ? "update" : "add", segs, cur, data));
       return { prevRev: prevRev, rev: rev };
     }
 
@@ -237,8 +241,9 @@ function dispatch_(action, req) {
       if (u.role === "student" && segs[0] === "students" && (segs[2] === "meetings" || segs[2] === "refs") && segs.length === 4 && (getDoc_(path) || {}).createdBy && getDoc_(path).createdBy !== u.login)
         fail_("permission-denied", "Only the person who added this, or the supervisor, can delete it.");
       if (segs[0] === "conferences" && u.role !== "supervisor" && (getDoc_(path) || {}).createdBy !== u.login) fail_("permission-denied", "You can only remove conference entries you added.");
-      const prevRev = currentRev_();
+      const prevRev = currentRev_(), old = getDoc_(path);
       deleteDoc_(path);
+      safely_(() => logChange_(u, "delete", segs, old, null));
       if (u.role === "supervisor" && segs.length === 2 && segs[0] === "students") {
         deletePrefix_(path + "/");
         deleteUser_("student:" + segs[1]);
@@ -258,6 +263,7 @@ function dispatch_(action, req) {
       const prevRev = currentRev_();
       putDoc_(segs.join("/") + "/" + id, data); const rev = bumpRev_();
       if (u.role === "supervisor" && segs[0] === "students" && segs[2] === "meetings") safely_(() => notifyMeeting_(segs[1], data));
+      safely_(() => logChange_(u, "add", segs.concat(id), null, data));
       return { id: id, prevRev: prevRev, rev: rev };
     }
   }
@@ -564,4 +570,92 @@ function sendScheduledEmails() {
     }
     if (changed) bumpRev_();
   } finally { SpreadsheetApp.flush(); lock.releaseLock(); }
+}
+
+
+/* ================================================================ in-app notifications (activity log)
+ *  Every change is written as one plain sentence to the "activity" tab of the Sheet.
+ *  The supervisor sees changes made by students; a student sees changes in their own record made by
+ *  someone else, plus new conferences. Nobody is notified about their own changes.
+ */
+const ACTIVITY_KEEP = 600;
+function activitySheet_() {
+  let sh = sheet_("activity");
+  if (!sh) { sh = SS_.insertSheet("activity"); sh.appendRow(["ts", "actor", "actorName", "role", "student", "scope", "tab", "text"]); sh.setFrozenRows(1); SHEETS_["activity"] = sh; }
+  return sh;
+}
+function logActivity_(e) {
+  const sh = activitySheet_();
+  sh.appendRow([String(Date.now()), e.actor, e.actorName || "", e.role || "", e.student || "", e.scope || "student", e.tab || "", String(e.text).slice(0, 400)]);
+  const n = sh.getLastRow();
+  if (n > ACTIVITY_KEEP + 100) sh.deleteRows(2, n - 1 - ACTIVITY_KEEP);   // keep the latest entries only
+}
+function readActivity_(u) {
+  const sh = activitySheet_(), n = sh.getLastRow();
+  if (n < 2) return [];
+  const from = Math.max(2, n - 399), v = sh.getRange(from, 1, n - from + 1, 8).getValues();
+  const myKey = u.role === "student" ? u.login.slice(8) : null, out = [];
+  for (let i = v.length - 1; i >= 0 && out.length < 60; i--) {
+    const r = v[i], e = { ts: Number(r[0]), actor: String(r[1]), actorName: String(r[2]), role: String(r[3]), student: String(r[4]), scope: String(r[5]), tab: String(r[6]), text: String(r[7]) };
+    if (!e.ts || e.actor === u.login) continue;
+    if (u.role === "supervisor" || e.scope === "all" || e.student === myKey) out.push(e);
+  }
+  return out;
+}
+
+/** Turns one saved change into a sentence, or nothing when it isn't worth a notification. */
+function logChange_(u, op, segs, before, after) {
+  const who = u.role === "supervisor" ? "Supervisor" : (u.name || "A student");
+  const base = { actor: u.login, actorName: who, role: u.role, student: "", scope: "student", tab: "" };
+  const q = t => "“" + String(t || "").slice(0, 120) + "”";
+  const ex = after || before || {};
+  if (segs[0] === "conferences") {
+    if (op === "add") logActivity_(Object.assign(base, { scope: "all", tab: "confs", text: who + " added a conference: " + q(ex.name) + (ex.deadline ? ", deadline " + ex.deadline : "") }));
+    return;
+  }
+  if (segs[0] !== "students") return;                       // supervisor's own items, lab code: no notifications
+  base.student = segs[1];
+  const student = (getDoc_("students/" + segs[1]) || {}).name || "a student";
+  if (segs.length === 2) {
+    if (op === "update" && before && after && before.course !== after.course && after.course) logActivity_(Object.assign(base, { text: who + " changed the course of " + (after.name || student) + " to " + after.course }));
+    return;
+  }
+  const kind = segs[2], t = q(ex.title);
+  if (kind === "tasks") {
+    base.tab = "tasks";
+    if (op === "add") return logActivity_(Object.assign(base, { text: who + " added a task " + t + (u.role === "supervisor" ? " for " + student : "") + (ex.due ? " (due " + ex.due + ")" : "") }));
+    if (op === "delete") return logActivity_(Object.assign(base, { text: who + " deleted the task " + t }));
+    const b = before || {}, a = after || {};
+    const newHist = (a.history || []).slice((b.history || []).length);
+    const remark = newHist.filter(x => x.remark && AUTO_REMARKS.indexOf(x.remark) < 0).map(x => x.remark).pop();
+    if (b.status !== a.status && a.status === "Done") return logActivity_(Object.assign(base, { text: who + " marked " + t + " as done" + (remark ? ": " + remark : "") }));
+    if (b.status === "Done" && a.status !== "Done") return logActivity_(Object.assign(base, { text: who + " reopened " + t }));
+    if (remark) return logActivity_(Object.assign(base, { text: (u.role === "supervisor" ? "Feedback on " : who + " commented on ") + t + ": " + remark }));
+    if (b.status !== a.status || (b.progress || 0) !== (a.progress || 0)) return logActivity_(Object.assign(base, { text: who + " updated " + t + ": " + (a.status || "Not started") + ", " + (a.progress || 0) + "%" }));
+    if ((b.due || "") !== (a.due || "")) return logActivity_(Object.assign(base, { text: who + " changed the due date of " + t + " to " + (a.due || "none") }));
+    return;
+  }
+  if (kind === "papers") {
+    base.tab = "papers";
+    const st = s => s === "Currently writing" ? "Draft" : s;
+    if (op === "add") return logActivity_(Object.assign(base, { text: who + " added a paper " + t + " (" + st(ex.status || "Currently writing") + ")" }));
+    if (op === "delete") return logActivity_(Object.assign(base, { text: who + " removed the paper " + t }));
+    const b = before || {}, a = after || {};
+    const remark = (a.history || []).slice((b.history || []).length).filter(x => x.remark && AUTO_REMARKS.indexOf(x.remark) < 0).map(x => x.remark).pop();
+    if (b.status !== a.status) return logActivity_(Object.assign(base, { text: t + " moved to " + st(a.status) + (remark ? ": " + remark : "") + " (by " + who + ")" }));
+    if (remark) return logActivity_(Object.assign(base, { text: (u.role === "supervisor" ? "Feedback on paper " : who + " commented on paper ") + t + ": " + remark }));
+    if ((b.overleaf || "") !== (a.overleaf || "") && a.overleaf) return logActivity_(Object.assign(base, { text: who + " added the Overleaf link for " + t }));
+    return;
+  }
+  if (kind === "meetings" && op === "add") return logActivity_(Object.assign(base, { tab: "meetings", text: who + " recorded a meeting (" + (ex.date || "") + ")" + ((ex.newTasks || []).length ? " with " + ex.newTasks.length + " action item" + (ex.newTasks.length > 1 ? "s" : "") : "") }));
+  if (kind === "refs" && op === "add") return logActivity_(Object.assign(base, { tab: "refs", text: who + " added an article " + t + (ex.venue ? " (" + ex.venue + ")" : "") }));
+  if (kind === "schedule") {
+    base.tab = "meetings";
+    const when = (ex.date || "") + (ex.time ? " at " + ex.time : "");
+    const rep = ex.repeat && ex.repeat !== "none" ? (ex.repeat === "weekly" ? " (weekly)" : ex.repeat === "biweekly" ? " (every 2 weeks)" : " (monthly)") : "";
+    if (op === "add") return logActivity_(Object.assign(base, { text: "New " + (ex.kind === "group" ? "group " : "") + "meeting scheduled: " + when + rep }));
+    if (op === "delete") return logActivity_(Object.assign(base, { text: "Meeting cancelled: " + when + rep }));
+    const sk = ((after || {}).skip || []).filter(d => ((before || {}).skip || []).indexOf(d) < 0);
+    if (sk.length) return logActivity_(Object.assign(base, { text: "Meeting on " + sk.join(", ") + " cancelled (the series continues)" }));
+  }
 }

@@ -61,6 +61,14 @@ Tasks (blue) · Publications (green) · Read articles: title, journal or confere
 - **Scheduled meetings → Repeats:** every week, every 2 weeks or every month, with an optional end date. Each occurrence gets its own 15-minute reminder email. Use **Cancel this one** to skip a single date, or **Cancel series** to stop it.
 - For group meetings you can tick **All PhD**, **All Masters** or **All B-Tech** instead of picking names.
 
+## In-app notifications (the bell)
+The 🔔 in the top bar shows changes made by the **other side**, with a red count of unread items:
+- **You see** what students do: joined the lab, added or finished a task, comments, papers added or moved (Draft → Submitted → Accepted), Overleaf links, articles, recorded meetings.
+- **A student sees** what you do in their record: feedback, new or deleted tasks, tasks marked done or reopened, meetings scheduled or cancelled, plus new conferences.
+- Nobody is notified about their own changes. Click an item to jump to it; **Mark all as read** clears the count. The page checks every 10 seconds; the tab title shows the count too, e.g. "(2) Supervisor Dashboard".
+- **Turn on desktop alerts** (inside the bell) shows a system pop-up while the site is open in a background tab. When the site is closed, the emails below still cover feedback, meetings and due dates.
+- The history is kept in a new **activity** tab of your Sheet (latest ~600 changes; older rows are removed automatically).
+
 ## Email notifications
 Sent from the Gmail account that owns the Apps Script, to students' **recovery email** and to the supervisor's sign-in email:
 - **Supervisor feedback:** the moment you save a remark on a student's task or paper, or log a meeting with notes, remarks or new tasks.
