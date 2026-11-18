@@ -226,7 +226,9 @@ function dispatch_(action, req) {
       const cur = getDoc_(path), prevRev = currentRev_();
       if (segs[0] === "conferences" && u.role !== "supervisor" && cur && cur.createdBy !== u.login) fail_("permission-denied", "You can only change conference entries you added.");
       if (action === "update") { if (!cur) fail_("not-found", "That record no longer exists."); data = Object.assign({}, cur, data); }
+      if (isLeave_(segs)) data = checkLeave_(u, cur, data);
       putDoc_(path, data); const rev = bumpRev_();
+      if (isLeave_(segs)) safely_(() => notifyLeave_(segs[1], u, cur, data));
       if (u.role === "supervisor" && segs[0] === "students" && segs.length === 4 && (segs[2] === "tasks" || segs[2] === "papers")) safely_(() => notifyFeedback_(segs[1], segs[2], cur, data));
       safely_(() => logChange_(u, cur ? "update" : "add", segs, cur, data));
       return { prevRev: prevRev, rev: rev };
@@ -238,6 +240,7 @@ function dispatch_(action, req) {
       if (u.role === "student" && segs[0] === "students" && segs.length === 2) fail_("permission-denied", "Only the supervisor can remove a student.");
       if (u.role === "student" && segs[0] === "students" && segs[2] === "tasks") fail_("permission-denied", "Only the supervisor can delete tasks.");
       if (u.role === "student" && segs[0] === "students" && segs[2] === "schedule") fail_("permission-denied", "Only the supervisor can cancel scheduled meetings.");
+      if (u.role === "student" && isLeave_(segs)) fail_("permission-denied", "Leave records can't be deleted. Withdraw a pending request instead.");
       if (u.role === "student" && segs[0] === "students" && (segs[2] === "meetings" || segs[2] === "refs") && segs.length === 4 && (getDoc_(path) || {}).createdBy && getDoc_(path).createdBy !== u.login)
         fail_("permission-denied", "Only the person who added this, or the supervisor, can delete it.");
       if (segs[0] === "conferences" && u.role !== "supervisor" && (getDoc_(path) || {}).createdBy !== u.login) fail_("permission-denied", "You can only remove conference entries you added.");
@@ -254,15 +257,17 @@ function dispatch_(action, req) {
     case "add": {
       const u = requireUser_(req), segs = colPath_(req.path);
       if (!canSee_(u, segs)) fail_("permission-denied", "You don't have access to these records.");
-      const data = req.data;
+      let data = req.data;
       if (!data || typeof data !== "object" || Array.isArray(data)) fail_("invalid-argument", "A record must be an object.");
-      if (segs[0] === "conferences") data.createdBy = u.login;   // record who added it, so only they (or the supervisor) can remove it
+      if (segs[0] === "conferences") data.createdBy = u.login;
+      if (segs[0] === "students" && segs[2] === "leaves" && segs.length === 3) data = checkLeave_(u, null, data);   // record who added it, so only they (or the supervisor) can remove it
       const want = String(req.id || "");
       const id = SEGMENT.test(want) && want.length <= 40 ? want : Utilities.getUuid().replace(/-/g, "").slice(0, 20);
       if (getDoc_(segs.join("/") + "/" + id)) return { id: id, prevRev: currentRev_(), rev: currentRev_() };   // already saved: a repeated click or retry
       const prevRev = currentRev_();
       putDoc_(segs.join("/") + "/" + id, data); const rev = bumpRev_();
       if (u.role === "supervisor" && segs[0] === "students" && segs[2] === "meetings") safely_(() => notifyMeeting_(segs[1], data));
+      if (segs[0] === "students" && segs[2] === "leaves") safely_(() => notifyLeave_(segs[1], u, null, data));
       safely_(() => logChange_(u, "add", segs.concat(id), null, data));
       return { id: id, prevRev: prevRev, rev: rev };
     }
@@ -649,6 +654,19 @@ function logChange_(u, op, segs, before, after) {
   }
   if (kind === "meetings" && op === "add") return logActivity_(Object.assign(base, { tab: "meetings", text: who + " recorded a meeting (" + (ex.date || "") + ")" + ((ex.newTasks || []).length ? " with " + ex.newTasks.length + " action item" + (ex.newTasks.length > 1 ? "s" : "") : "") }));
   if (kind === "refs" && op === "add") return logActivity_(Object.assign(base, { tab: "refs", text: who + " added an article " + t + (ex.venue ? " (" + ex.venue + ")" : "") }));
+  if (kind === "leaves") {
+    base.tab = "profile";
+    const span = leaveSpan_(ex), b = before || {}, a = after || {};
+    if (op === "add") return logActivity_(Object.assign(base, { text: u.role === "supervisor" ? "Supervisor recorded your leave: " + span + " (approved)" : who + " applied for leave: " + span + (ex.type ? " · " + ex.type : "") }));
+    if (op === "delete") return logActivity_(Object.assign(base, { text: who + " deleted the leave record " + span }));
+    if (b.status !== a.status) {
+      if (a.status === "Approved" || a.status === "Rejected") return logActivity_(Object.assign(base, { text: "Leave " + span + " " + a.status.toLowerCase() + (a.remark ? ": " + a.remark : "") }));
+      if (a.status === "Withdrawn") return logActivity_(Object.assign(base, { text: who + " withdrew the leave request " + span }));
+      if (a.status === "Pending") return logActivity_(Object.assign(base, { text: "Leave " + span + " is waiting for a decision again" }));
+    }
+    if (b.from !== a.from || b.to !== a.to) return logActivity_(Object.assign(base, { text: who + " changed leave dates to " + span }));
+    return;
+  }
   if (kind === "schedule") {
     base.tab = "meetings";
     const when = (ex.date || "") + (ex.time ? " at " + ex.time : "");
@@ -657,5 +675,56 @@ function logChange_(u, op, segs, before, after) {
     if (op === "delete") return logActivity_(Object.assign(base, { text: "Meeting cancelled: " + when + rep }));
     const sk = ((after || {}).skip || []).filter(d => ((before || {}).skip || []).indexOf(d) < 0);
     if (sk.length) return logActivity_(Object.assign(base, { text: "Meeting on " + sk.join(", ") + " cancelled (the series continues)" }));
+  }
+}
+
+
+/* ================================================================ leave
+ *  students/<key>/leaves/<id>: { from, to, days, type, reason, status, appliedOn, remark, decidedOn, ... }
+ *  Every calendar day counts, Saturdays and Sundays included. Students apply (always "Pending") and may
+ *  withdraw while pending; only the supervisor approves, rejects, records leave directly or deletes.
+ */
+const LEAVE_STATUSES = ["Pending", "Approved", "Rejected", "Withdrawn"];
+function isLeave_(segs) { return segs[0] === "students" && segs[2] === "leaves" && segs.length === 4; }
+function leaveDays_(from, to) {
+  const a = from.split("-").map(Number), b = to.split("-").map(Number);
+  return Math.round((Date.UTC(b[0], b[1] - 1, b[2]) - Date.UTC(a[0], a[1] - 1, a[2])) / 864e5) + 1;
+}
+function checkLeave_(u, cur, d) {
+  const okDate = x => /^\d{4}-\d{2}-\d{2}$/.test(String(x || ""));
+  if (!okDate(d.from) || !okDate(d.to)) fail_("invalid-argument", "Choose the first and last day of the leave.");
+  if (d.to < d.from) fail_("invalid-argument", "The last day of leave can't be before the first day.");
+  d.days = leaveDays_(d.from, d.to);
+  if (!d.appliedOn) d.appliedOn = cur && cur.appliedOn ? cur.appliedOn : istToday_();
+  if (d.days > 366) fail_("invalid-argument", "A single leave can be at most one year long.");
+  if (u.role === "student") {
+    if (cur && cur.status !== "Pending") fail_("permission-denied", "This leave request has already been decided. Ask your supervisor if it needs to change.");
+    if (!cur) d.status = "Pending";
+    else if (d.status !== "Pending" && d.status !== "Withdrawn") fail_("permission-denied", "Only the supervisor can approve or reject leave.");
+    ["remark", "decidedOn", "decidedAt", "decidedBy"].forEach(k => { if (cur && cur[k] !== undefined) d[k] = cur[k]; else delete d[k]; });
+  } else if (LEAVE_STATUSES.indexOf(d.status) < 0) d.status = cur ? cur.status : "Approved";
+  return d;
+}
+function leaveSpan_(l) {
+  if (!l.from) return "";
+  const f = x => niceWhen_(x, "");
+  return (l.from === l.to ? f(l.from) : f(l.from) + " to " + f(l.to)) + " (" + l.days + (l.days === 1 ? " day)" : " days)");
+}
+function notifyLeave_(key, u, before, after) {
+  const span = leaveSpan_(after), name = studentName_(key);
+  if (u.role === "student" && !before && after.status === "Pending") {
+    const sup = supervisorEmail_(); if (!sup) return;
+    const lines = [name + " applied for leave: " + span + ". Saturdays and Sundays are counted."];
+    if (after.type) lines.push("Type: " + after.type);
+    if (after.reason) lines.push("Reason:\n" + after.reason);
+    lines.push("Approve or reject it on the student's Profile & leave tab.");
+    sendMail_(sup, "Leave request: " + name + ", " + span, "Supervisor", lines, SUP_LINK_());
+    return;
+  }
+  if (u.role === "supervisor" && (after.status === "Approved" || after.status === "Rejected") && (!before || before.status !== after.status)) {
+    const to = studentEmail_(key); if (!to) return;
+    const lines = [before ? "Your leave request for " + span + " was " + after.status.toLowerCase() + "." : "Your supervisor recorded leave for you: " + span + " (approved)."];
+    if (after.remark) lines.push("Supervisor's note:\n" + after.remark);
+    sendMail_(to, "Leave " + after.status.toLowerCase() + ": " + span, name, lines, STUDENT_LINK_());
   }
 }

@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity } from "./core.js?v=20261117-1100";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity } from "./core.js?v=20261118-1400";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -32,7 +32,7 @@ const PTYPES = ["Journal article", "Conference paper", "Review article", "Book c
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
-const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
+const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], leaves: [], leaveYear: new Date().getFullYear(), tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
 /** Wraps a form's submit handler: while it is saving, further clicks/Enter are ignored and the buttons are locked. */
 function guardSubmit(handler) {
@@ -148,7 +148,8 @@ function renderStats() {
   const avg = avgDays(all);
   document.getElementById("stats").replaceChildren(
     stat(scopedStudents().length, S.course === "all" ? "Students" : S.course + " students"), stat(open.length, "Open tasks"), stat(od.length, "Overdue", od.length),
-    stat(done.length, "Completed"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).draft, "Draft papers"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).submitted, "Submitted"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).accepted, "Accepted"), stat(avg == null ? "—" : avg + "d", "Avg. time to finish"), stat(stale.length, "Not met in 30 days", stale.length));
+    stat(done.length, "Completed"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).draft, "Draft papers"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).submitted, "Submitted"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).accepted, "Accepted"), stat(avg == null ? "—" : avg + "d", "Avg. time to finish"), stat(stale.length, "Not met in 30 days", stale.length),
+    stat(pendingLeaves().length, "Leave requests", pendingLeaves().length));
 }
 function renderRoster() {
   const items = [h("button", { class: "r-item", type: "button", "aria-current": S.sel === null ? "true" : "false", onclick: () => select(null) },
@@ -173,7 +174,8 @@ function renderRoster() {
       h("span", { class: "meta" },
         h("span", { text: l ? "Met " + (diff(l, todayStr()) === 0 ? "today" : diff(l, todayStr()) + "d ago") : "No meetings yet" }),
         h("span", { text: open.length + " open · " + (mine.length - open.length) + " done" }),
-        od ? h("span", { class: "chip bad", text: od + " overdue" }) : null)));
+        od ? h("span", { class: "chip bad", text: od + " overdue" }) : null,
+        pendingLeaves(s.id).length ? h("span", { class: "chip warn", text: "Leave request" }) : null)));
   }
   }
   document.getElementById("roster").replaceChildren(...items);
@@ -182,6 +184,7 @@ function renderRoster() {
 /* ---------- overview ---------- */
 function renderOverview() {
   const d = document.getElementById("detail");
+  const typing = document.activeElement; if (typing && typing.id && typing.id.startsWith("lvr-") && d.contains(typing)) return;   // writing a note on a leave request
   if (S.loaded < NCOLL) { d.replaceChildren(h("div", { class: "empty" }, h("h3", { text: "Loading the group…" }), h("p", { id: "loadnote", text: "Fetching students, tasks and meetings." }))); return; }
   if (!S.students.length) {
     d.replaceChildren(h("div", { class: "empty" },
@@ -196,7 +199,7 @@ function renderOverview() {
     ...byCourse(studs).map(([course, list]) => h("div", { class: "course-block" },
       S.course === "all" ? h("div", { class: "task-group course-group" }, h("span", { text: course }), h("span", { class: "mono", text: String(list.length) })) : null,
       h("div", { class: "table-wrap" }, h("table", null,
-        h("thead", null, h("tr", null, ["Student", "Adm. no.", "Current tasks", "Overdue", "Completed", "Papers (D / S / A)", "Last meeting"].map(x => h("th", { text: x })))),
+        h("thead", null, h("tr", null, ["Student", "Adm. no.", "Current tasks", "Overdue", "Completed", "Papers (D / S / A)", "Last meeting", "Leave " + thisYear()].map(x => h("th", { text: x })))),
         h("tbody", null, list.map(s => {
           const mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), od = open.filter(isOverdue).length, pc = pubCounts(papersOf(s.id)), l = lastMeeting(s.id);
           return h("tr", null,
@@ -206,7 +209,9 @@ function renderOverview() {
             h("td", null, od ? h("span", { class: "chip bad", text: String(od) }) : h("span", { class: "muted", text: "0" })),
             h("td", { class: "num", text: String(mine.length - open.length) }),
             h("td", { class: "num", text: pc.draft + " / " + pc.submitted + " / " + pc.accepted }),
-            h("td", null, l ? h("span", { class: isStale(s) ? "chip warn" : "", text: fmtD(l) }) : h("span", { class: "muted", text: "None yet" })));
+            h("td", null, l ? h("span", { class: isStale(s) ? "chip warn" : "", text: fmtD(l) }) : h("span", { class: "muted", text: "None yet" })),
+            h("td", null, h("button", { class: "linkish num", type: "button", title: "Open " + s.name + "'s profile and leave record", text: plural(leaveTotal(s.id, thisYear()), "day"), onclick: () => { S.tab = "profile"; select(s.id); } }),
+              pendingLeaves(s.id).length ? h("span", { class: "chip warn", style: "margin-left:6px", text: pendingLeaves(s.id).length + " pending" }) : null));
         })))))));
   const open = tasksOf().filter(t => !isDone(t) && inScope(t.studentId)).sort(sortTasks);
   const openPanel = h("section", { class: "panel sec-tasks" },
@@ -249,7 +254,151 @@ function renderOverview() {
         h("td", null, pChip(pStatus(p))), h("td", { class: "num", text: m.review == null ? "—" : m.review + "d" }),
         h("td", null, p.overleaf ? h("a", { class: "ext", href: p.overleaf, target: "_blank", rel: "noopener", text: "Overleaf ↗" }) : h("span", { class: "muted", text: "—" })))]; }))))
       : h("p", { class: "note", text: "Papers added on a student's Publications tab appear here with their status and review time." }));
-  d.replaceChildren(...[todayPanel(), studentsPanel, openPanel, papPanel, donePanel, meetPanel].filter(Boolean));
+  d.replaceChildren(...[todayPanel(), pendingLeavePanel(), studentsPanel, openPanel, papPanel, donePanel, meetPanel].filter(Boolean));
+}
+
+
+/* ---------- profile & leave ---------- */
+const LEAVE_TYPES = ["Personal", "Medical", "Academic (conference, workshop)", "Family / emergency", "Other"];
+function thisYear() { return new Date().getFullYear(); }
+/** Calendar days from the first to the last day, both included. Saturdays and Sundays count. */
+function leaveDays(from, to) { return from && to && to >= from ? diff(from, to) + 1 : 0; }
+function leavesOf(sid) { return (S.leaves || []).filter(l => !sid || l.studentId === sid); }
+function pendingLeaves(sid) { return leavesOf(sid).filter(l => l.status === "Pending" && inScope(l.studentId)); }
+/** Days of one leave that fall inside a calendar year (a leave over New Year is split between the two years). */
+function daysInYear(l, y) {
+  if (!l.from || !l.to) return 0;
+  const a = l.from > y + "-01-01" ? l.from : y + "-01-01", b = l.to < y + "-12-31" ? l.to : y + "-12-31";
+  return b >= a ? diff(a, b) + 1 : 0;
+}
+function leaveTotal(sid, y, status = "Approved") { return leavesOf(sid).filter(l => l.status === status).reduce((n, l) => n + daysInYear(l, y), 0); }
+function leaveSpan(l) { return l.from === l.to ? fmtD(l.from) : fmtD(l.from) + " – " + fmtD(l.to); }
+function leaveChip(st) { return h("span", { class: "chip " + ({ Pending: "warn", Approved: "good", Rejected: "bad" }[st] || "plain"), text: st === "Pending" ? "Waiting for approval" : st }); }
+function leaveYears(sid) {
+  const ys = new Set([thisYear()]);
+  leavesOf(sid).forEach(l => { if (l.from) for (let y = Number(l.from.slice(0, 4)); y <= Number((l.to || l.from).slice(0, 4)); y++) ys.add(y); });
+  return [...ys].sort((a, b) => b - a);
+}
+function setLeave(l, patch, msg) { return write(db => db.doc(P("leaves", l)).update(patch), msg); }
+
+function profilePanel(s) {
+  const f = (id, label, v, attrs = {}) => h("label", { class: "fieldlabel" }, label, h("input", { id, value: v || "", ...attrs }));
+  const form = h("form", { class: "edit-box", onsubmit: async e => {
+      e.preventDefault(); const name = val("pf-name").trim();
+      if (!name) { say("The name can't be empty."); return; }
+      const year = val("pf-year").trim();
+      if (year && !/^(19|20)\d\d$/.test(year)) { say("Enter the year of admission as four digits, e.g. 2023."); return; }
+      if (await write(db => db.doc("students/" + s.id).update({ name, topic: val("pf-topic").trim(), year, phone: val("pf-phone").trim(), supervisorName: val("pf-sup").trim() }), "Profile saved")) e.target.closest("details").open = false;
+    } },
+    h("div", { class: "row" }, f("pf-name", "Full name", s.name, { maxlength: "80" }), f("pf-year", "Year of admission", s.year, { maxlength: "4", inputmode: "numeric", placeholder: "e.g. 2023" })),
+    f("pf-topic", "Research topic", s.topic, { maxlength: "300" }),
+    h("div", { class: "row" }, f("pf-phone", "Phone (optional)", s.phone, { maxlength: "20", inputmode: "tel" }), f("pf-sup", "Co-supervisor (optional)", s.supervisorName, { maxlength: "80" })),
+    h("div", null, h("button", { class: "btn", type: "submit", text: "Save profile" })));
+  return h("section", { class: "panel sec-profile" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Profile" })),
+    h("dl", { class: "profile", id: "pf-view" }),
+    S.canWrite ? h("details", { class: "sub" }, h("summary", { text: "Edit profile" }), h("div", { style: "margin-top:10px" }, form)) : null);
+}
+function refreshProfile(s) {
+  const y = thisYear(), joined = s.createdAt > 1e12 ? fmtD(localDate(s.createdAt)) : "—";
+  const rows = [["Name", s.name], ["Admission no.", s.admissionNo || s.id.toUpperCase()], ["Course", courseOf(s)], ["Year of admission", s.year || "—"],
+    ["Research topic", s.topic || "—"], ["Co-supervisor", s.supervisorName || "—"], ["Email", s.email || "Not added"], ["Phone", s.phone || "—"],
+    ["Joined the tracker", joined], ["Leave taken in " + y, plural(leaveTotal(s.id, y), "day") + (leaveTotal(s.id, y, "Pending") ? " · " + plural(leaveTotal(s.id, y, "Pending"), "day") + " waiting for approval" : "")]];
+  document.getElementById("pf-view").replaceChildren(...rows.map(([k, v]) => h("div", null, h("dt", { text: k }), h("dd", { text: v }))));
+  refreshLeave(s);
+}
+
+function leavePanel(s) {
+  const preview = h("span", { class: "lv-days", id: "lv-days", text: "1 day" });
+  const upd = () => { const a = val("lv-from"), b = val("lv-to"); preview.textContent = !a || !b ? "" : b < a ? "The last day is before the first day" : plural(leaveDays(a, b), "day") + " (Saturdays and Sundays included)"; preview.classList.toggle("bad", !!a && !!b && b < a); };
+  const form = h("form", { class: "edit-box", hidden: !S.canWrite, onsubmit: async e => {
+      e.preventDefault();
+      const from = val("lv-from"), to = val("lv-to") || from, reason = val("lv-reason").trim(), type = val("lv-type");
+      if (!from) { say("Choose the first day of leave."); return; }
+      if (to < from) { say("The last day of leave can't be before the first day."); return; }
+      if (!reason) { say("Add a short reason for the leave."); return; }
+      const clash = leavesOf(s.id).find(l => (l.status === "Pending" || l.status === "Approved") && l.from <= to && l.to >= from);
+      if (clash) { say("These dates overlap the leave of " + leaveSpan(clash) + " (" + clash.status.toLowerCase() + "). Change the dates" + (S.isOwner ? "." : " or withdraw that request first.")); return; }
+      const days = leaveDays(from, to);
+      const data = { studentId: s.id, from, to, days, type, reason, status: S.isOwner ? "Approved" : "Pending", appliedOn: todayStr(), createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole };
+      if (S.isOwner) Object.assign(data, { decidedOn: todayStr(), decidedAt: Date.now(), decidedBy: S.myName });
+      const ok = await write(db => db.collection(C("leaves", s.id)).add(data), S.isOwner ? "Leave recorded: " + plural(days, "day") : "Leave request sent to your supervisor (" + plural(days, "day") + ")");
+      if (ok) { ["lv-from", "lv-to", "lv-reason"].forEach(id => document.getElementById(id).value = ""); upd(); S.leaveYear = Number(from.slice(0, 4)); refreshLeave(s); }
+    } },
+    h("h4", { text: S.isOwner ? "Record leave for " + s.name : "Apply for leave" }),
+    h("p", { class: "note", text: S.isOwner ? "Saved as approved straight away. " + s.name + " is notified." : "Your supervisor is notified and approves or rejects the request. Every day from the first to the last is counted, including Saturdays and Sundays." }),
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "First day", h("input", { id: "lv-from", type: "date", oninput: () => { if (!val("lv-to") || val("lv-to") < val("lv-from")) document.getElementById("lv-to").value = val("lv-from"); upd(); } })),
+      h("label", { class: "fieldlabel" }, "Last day", h("input", { id: "lv-to", type: "date", oninput: upd })),
+      h("label", { class: "fieldlabel" }, "Type", h("select", { id: "lv-type" }, LEAVE_TYPES.map(x => h("option", { value: x, text: x }))))),
+    h("label", { class: "fieldlabel" }, "Reason", h("textarea", { id: "lv-reason", rows: "2", maxlength: "1000", placeholder: S.isOwner ? "e.g. Attending IEEE INFOCOM in London" : "e.g. Going home for a family function" })),
+    h("div", { class: "lv-submit" }, h("button", { class: "btn", type: "submit", text: S.isOwner ? "Record leave" : "Apply for leave" }), preview));
+  preview.textContent = "";
+  const yearSel = h("select", { id: "lv-year", "aria-label": "Year", onchange: e => { S.leaveYear = Number(e.target.value); refreshLeave(s); } });
+  return h("section", { class: "panel sec-leave" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Leave" }), h("label", { class: "inline-label" }, "Year ", yearSel)),
+    h("div", { class: "s-figs lv-figs", id: "lv-figs" }),
+    h("p", { class: "note", id: "lv-types" }),
+    form,
+    h("div", { class: "task-group" }, h("span", { id: "lv-list-head", text: "Leave record" }), h("span", { class: "mono", id: "lv-n" })),
+    h("ul", { class: "refs", id: "lv-list" }));
+}
+function refreshLeave(s) {
+  const sel = document.getElementById("lv-year"); if (!sel) return;
+  const years = leaveYears(s.id); if (!years.includes(S.leaveYear)) S.leaveYear = years[0];
+  const y = S.leaveYear;
+  if (sel.dataset.sig !== years.join(",")) { sel.replaceChildren(...years.map(v => h("option", { value: String(v), text: String(v) }))); sel.dataset.sig = years.join(","); }
+  sel.value = String(y);
+  const inYear = leavesOf(s.id).filter(l => daysInYear(l, y) > 0);
+  const approved = leaveTotal(s.id, y), pending = leaveTotal(s.id, y, "Pending");
+  document.getElementById("lv-figs").replaceChildren(
+    stat(approved, "Days taken in " + y), stat(pending, "Days waiting for approval", pending),
+    stat(inYear.filter(l => l.status === "Approved").length, "Approved leaves"), stat(inYear.filter(l => l.status === "Rejected").length, "Rejected"));
+  const byType = LEAVE_TYPES.map(t => [t, inYear.filter(l => l.status === "Approved" && (l.type || "Other") === t).reduce((n, l) => n + daysInYear(l, y), 0)]).filter(([, n]) => n);
+  document.getElementById("lv-types").textContent = byType.length ? "By type: " + byType.map(([t, n]) => t + " " + n + "d").join(" · ") + ". Saturdays and Sundays are counted." : "No approved leave in " + y + ". Saturdays and Sundays are counted as leave days.";
+  document.getElementById("tabn-profile").textContent = pendingLeaves(s.id).length ? pendingLeaves(s.id).length + " pending" : "";
+  document.getElementById("lv-list-head").textContent = "Leave record " + y;
+  document.getElementById("lv-n").textContent = String(inYear.length);
+  const list = document.getElementById("lv-list");
+  if (list.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;   // typing a remark
+  const order = { Pending: 0, Approved: 1, Rejected: 2, Withdrawn: 3 };
+  inYear.sort((a, b) => order[a.status] - order[b.status] || b.from.localeCompare(a.from));
+  list.replaceChildren(...(inYear.length ? inYear.map(l => leaveItem(l, false, y))
+    : [h("li", null, h("p", { class: "note", text: S.isOwner ? "No leave in " + y + "." : "No leave in " + y + ". Use the form above to apply." }))]));
+}
+function leaveItem(l, showName, y) {
+  const part = y && daysInYear(l, y) !== l.days ? " (" + daysInYear(l, y) + " in " + y + ")" : "";
+  const actions = h("div", { class: "lv-actions" });
+  if (S.isOwner && l.status === "Pending") {
+    const remark = h("input", { id: "lvr-" + l.id, maxlength: "300", placeholder: "Note to the student (optional)", "aria-label": "Note for this leave decision" });
+    const decide = st => setLeave(l, { status: st, remark: remark.value.trim(), decidedOn: todayStr(), decidedAt: Date.now(), decidedBy: S.myName }, "Leave " + st.toLowerCase());
+    actions.append(remark, h("button", { class: "btn small", type: "button", text: "Approve", onclick: () => decide("Approved") }), h("button", { class: "btn ghost small", type: "button", text: "Reject", onclick: () => decide("Rejected") }));
+  } else if (S.isOwner) {
+    if (l.status !== "Withdrawn") actions.append(h("button", { class: "btn ghost small", type: "button", text: "Change decision", onclick: () => setLeave(l, { status: "Pending" }, "Leave moved back to waiting for approval") }));
+    const del = h("button", { class: "btn danger small", type: "button", text: "Delete" }); let armed = null;
+    del.onclick = () => { if (!armed) { del.textContent = "Confirm delete"; del.classList.add("armed"); armed = setTimeout(() => { armed = null; del.textContent = "Delete"; del.classList.remove("armed"); }, 4000); return; } clearTimeout(armed); write(db => db.doc(P("leaves", l)).delete(), "Leave record deleted"); };
+    actions.append(del);
+  } else if (l.status === "Pending" && S.canWrite) {
+    const wd = h("button", { class: "btn ghost small", type: "button", text: "Withdraw request" }); let armed = null;
+    wd.onclick = () => { if (!armed) { wd.textContent = "Confirm withdraw"; wd.classList.add("armed"); armed = setTimeout(() => { armed = null; wd.textContent = "Withdraw request"; wd.classList.remove("armed"); }, 4000); return; } clearTimeout(armed); setLeave(l, { status: "Withdrawn", withdrawnOn: todayStr() }, "Leave request withdrawn"); };
+    actions.append(wd);
+  }
+  return h("li", { class: "ref leave lv-" + l.status.toLowerCase(), id: "leave-" + l.id },
+    h("div", { class: "lv-main" },
+      h("div", { class: "lv-top" },
+        showName ? h("button", { class: "linkish", type: "button", text: studentName(l.studentId), onclick: () => { S.tab = "profile"; select(l.studentId); } }) : null,
+        h("b", { text: leaveSpan(l) }), h("span", { class: "lv-count", text: plural(l.days || leaveDays(l.from, l.to), "day") + part }), leaveChip(l.status)),
+      h("p", { class: "note", text: [l.type, (l.byRole === "supervisor" ? "Recorded by supervisor " : "Applied ") + fmtD(l.appliedOn), l.decidedOn && l.status !== "Pending" && l.byRole !== "supervisor" ? l.status + " " + fmtD(l.decidedOn) : "", l.status === "Withdrawn" && l.withdrawnOn ? "Withdrawn " + fmtD(l.withdrawnOn) : ""].filter(Boolean).join(" · ") }),
+      l.reason ? h("p", { class: "lv-reason", text: l.reason }) : null,
+      l.remark ? h("div", { class: "fb fb-inline" }, h("span", { class: "fb-tag", text: "Supervisor" + (l.decidedOn ? " · " + fmtD(l.decidedOn) : "") }), h("span", { text: l.remark })) : null),
+    actions.childNodes.length ? actions : null);
+}
+function pendingLeavePanel() {
+  const list = pendingLeaves().sort((a, b) => a.from.localeCompare(b.from));
+  if (!list.length) return null;
+  return h("section", { class: "panel sec-leave" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Leave requests waiting for you" }), h("span", { class: "muted", text: plural(list.length, "request") })),
+    h("ul", { class: "refs" }, list.map(l => leaveItem(l, true))));
 }
 
 /* ---------- publications ---------- */
@@ -513,12 +662,13 @@ function buildStudent(s) {
     meetings: h("div", { class: "tabpane", "data-pane": "meetings" },
       h("section", { class: "panel sec-meet" }, h("div", { class: "panel-head" }, h("h3", { text: "Scheduled meetings" }), h("span", { class: "muted", id: "stu-sched-count" })),
         h("ul", { class: "refs", id: "stu-sched" })),
-      h("div", { class: "cols" }, meetPanel, logPanel)) };
+      h("div", { class: "cols" }, meetPanel, logPanel)),
+    profile: h("div", { class: "tabpane", "data-pane": "profile" }, profilePanel(s), leavePanel(s)) };
   const tabBtn = (k, l) => h("button", { type: "button", role: "tab", "data-tab": k, class: "tab-" + k, "aria-selected": S.tab === k ? "true" : "false",
     onclick: () => { S.tab = k; showTab(); } }, l, h("span", { class: "n", id: "tabn-" + k }));
-  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Read articles"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"));
+  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Read articles"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"), tabBtn("profile", "Profile & leave"));
   if (S.isOwner && S.tab === "confs") S.tab = "tasks";
-  d.replaceChildren(...[head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings].filter(Boolean));
+  d.replaceChildren(...[head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings, panes.profile].filter(Boolean));
   showTab();
   updSig = null; pupdSig = null;
 }
@@ -1069,7 +1219,9 @@ function refreshStudent(s) {
     stat(open.length, "Open tasks"), stat(open.filter(isOverdue).length, "Overdue", open.filter(isOverdue).length), stat(done.length, "Completed"),
     stat(avg == null ? "—" : avg + "d", "Avg. days to finish"), stat(withDue.length ? (withDue.length - late) + "/" + withDue.length : "—", "Finished on time"),
     stat(pubCounts(papersOf(s.id)).draft, "Draft papers"), stat(pubCounts(papersOf(s.id)).submitted, "Submitted papers"), stat(pubCounts(papersOf(s.id)).accepted, "Accepted papers"),
-    stat(ms.length, "Meetings"), stat(l ? diff(l, todayStr()) + "d" : "—", "Since last meeting"), stat(nextM ? fmtD(nextM) : "—", "Next meeting"));
+    stat(ms.length, "Meetings"), stat(l ? diff(l, todayStr()) + "d" : "—", "Since last meeting"), stat(nextM ? fmtD(nextM) : "—", "Next meeting"),
+    stat(leaveTotal(s.id, thisYear()) + "d", "Leave in " + thisYear()));
+  refreshProfile(s);
   document.querySelectorAll("#task-filters button").forEach(b => b.setAttribute("aria-pressed", b.dataset.f === S.filter ? "true" : "false"));
   open.sort(sortTasks); done.sort((a, b) => (doneDateOf(b) || "").localeCompare(doneDateOf(a) || ""));
   const groupHead = (label, n) => h("div", { class: "task-group" }, h("span", { text: label }), h("span", { class: "mono", text: String(n) }));
@@ -1154,11 +1306,11 @@ function select(id, taskId) { S.sel = id; builtFor = null; S.filter = "all"; ren
 
 /* ---------- start-up: sign-in check, role, live data ---------- */
 const subs = {};
-function rebuildFlat() { for (const k of ["tasks", "meetings", "papers", "refs", "schedule"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []); }
+function rebuildFlat() { for (const k of ["tasks", "meetings", "papers", "refs", "schedule", "leaves"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []); }
 function watchStudent(sid) {
   if (subs[sid]) return;
   const entry = subs[sid] = { data: {}, un: [] };
-  for (const k of ["tasks", "meetings", "papers", "refs", "schedule"]) entry.un.push(S.db.collection(C(k, sid)).onSnapshot(snap => {
+  for (const k of ["tasks", "meetings", "papers", "refs", "schedule", "leaves"]) entry.un.push(S.db.collection(C(k, sid)).onSnapshot(snap => {
     entry.data[k] = snap.docs.map(doc => ({ ...doc.data(), id: doc.id, studentId: sid })); rebuildFlat(); renderAll();
   }, err => say("Couldn't load some " + k + ". Reload the page to try again.")));
 }

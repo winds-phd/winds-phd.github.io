@@ -56,6 +56,13 @@ Send them `https://winds-phd.github.io/register.html` and the lab code. They reg
 ## Sections on each student's page
 Tasks (blue) · Publications (green) · Read articles: title, journal or conference name, and link (violet) · Conferences: shared by the whole group, anyone can add (rose) · Meetings (peach). Supervisor feedback is highlighted in yellow wherever it appears.
 
+## Profile & leave
+Each student has a **Profile & leave** tab: name, admission number, course, year of admission, research topic, co-supervisor, email and phone (editable with **Edit profile**), followed by their leave record.
+- **Students apply for leave:** first day, last day, type (Personal, Medical, Academic, Family / emergency, Other) and a reason. **Every calendar day counts, Saturdays and Sundays included** (Fri 20 to Mon 23 = 4 days). Overlapping dates are refused with a message. A request can be withdrawn while it's still pending.
+- **You approve or reject**, with an optional note, from the student's tab or from **Leave requests waiting for you** at the top of the Group overview. **Change decision** sends one back to pending. **Record leave** on a student's tab saves leave as approved straight away. Only you can approve, reject or delete; the server enforces this.
+- **Yearly totals:** approved days per calendar year, with days still waiting for approval shown separately and a breakdown by type. Use the Year menu for earlier years. Leave over New Year is split between the two years. The overview table has a **Leave <year>** column for every student.
+- **Notifications:** you get an email and a bell alert when a student applies; the student gets an email and a bell alert when you approve, reject or record leave.
+
 ## Courses and recurring meetings
 - Students are grouped by course (PhD, Masters, B-Tech) in the sidebar and on the overview. The **Showing** switch above the figures narrows the dashboard to one course; your choice is remembered on that device.
 - **Scheduled meetings → Repeats:** every week, every 2 weeks or every month, with an optional end date. Each occurrence gets its own 15-minute reminder email. Use **Cancel this one** to skip a single date, or **Cancel series** to stop it.
