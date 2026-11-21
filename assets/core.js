@@ -1,6 +1,6 @@
 // Talks to the Google Apps Script backend (data lives in a Google Sheet in the supervisor's Drive).
 // Provides sign-in helpers and a small live data layer used by every page.
-import { API_URL } from "./config.js?v=20261121-1400";
+import { API_URL } from "./config.js?v=20261121-1500";
 
 export const configured = !String(API_URL).startsWith("PASTE_") && /^https:\/\//.test(API_URL);
 const TOKEN_KEY = "phdlog.token";
@@ -47,6 +47,9 @@ const cache = new Map();
 let rev = null, synced = false, syncing = null, pollTimer = null;
 const watchers = new Set();
 const activityFns = new Set();
+let lab = [];
+/** Everyone registered in the lab: [{ key, name, course }] (names only, for picking co-authors). */
+export function labMembers() { return lab; }
 /** Called after each fresh sync with the latest changes made by other people (newest first). */
 export function onActivity(fn) { activityFns.add(fn); return () => activityFns.delete(fn); }
 const POLL_MS = 10000;
@@ -58,7 +61,7 @@ async function sync() {
   syncing = (async () => {
     try {
       const j = await call("sync", { rev });
-      if (!j.unchanged) { cache.clear(); for (const d of j.docs) cache.set(d.path, d.data); rev = j.rev; applyPending(); if (Array.isArray(j.activity)) for (const f of activityFns) { try { f(j.activity); } catch (e) { console.error(e); } } }
+      if (!j.unchanged) { cache.clear(); for (const d of j.docs) cache.set(d.path, d.data); rev = j.rev; if (Array.isArray(j.lab)) lab = j.lab; applyPending(); if (Array.isArray(j.activity)) for (const f of activityFns) { try { f(j.activity); } catch (e) { console.error(e); } } }
       synced = true;
       for (const w of watchers) w.ok();
       emit();
@@ -130,6 +133,18 @@ export const db = {
       update: data => change("update", { path, data }, [[path, { op: "put", data: { ...(cache.get(path) || {}), ...structuredClone(data) } }]]),
       delete: () => change("delete", { path }, [[path, { op: "del" }]]),
       onSnapshot: (next, err) => subscribe(() => ({ key: cache.get(path) ?? null, snap: docSnap(path) }), next, err)
+    };
+  },
+  /** Every cached record named students/<anyone>/<kind>/<id> — e.g. papers this student co-authors. */
+  collectionGroup(kind) {
+    return {
+      onSnapshot: (next, err) => subscribe(() => {
+        const kids = [];
+        for (const [p, d] of cache) { const g = p.split("/"); if (g.length === 4 && g[0] === "students" && g[2] === kind) kids.push({ id: g[3], path: p, owner: g[1], d }); }
+        kids.sort((a, b) => a.path < b.path ? -1 : 1);
+        const docs = kids.map(k => ({ id: k.id, path: k.path, owner: k.owner, exists: true, data: () => k.d, metadata: meta }));
+        return { key: kids.map(k => [k.path, k.d]), snap: { docs, size: docs.length, empty: !docs.length, metadata: meta } };
+      }, next, err)
     };
   },
   collection(path) {

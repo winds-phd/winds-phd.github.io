@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity } from "./core.js?v=20261121-1400";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261121-1500";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -32,7 +32,7 @@ const PTYPES = ["Journal article", "Conference paper", "Review article", "Book c
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
-const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], leaves: [], messages: [], msgstate: [], groups: [], gmsgs: [], gseen: [], thread: "dm", leaveYear: new Date().getFullYear(), tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
+const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], leaves: [], messages: [], msgstate: [], groups: [], gmsgs: [], gseen: [], thread: "dm", sharedPapers: [], leaveYear: new Date().getFullYear(), tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
 /** Wraps a form's submit handler: while it is saving, further clicks/Enter are ignored and the buttons are locked. */
 function guardSubmit(handler) {
@@ -252,7 +252,8 @@ function renderOverview() {
       h("tbody", null, pp.flatMap((p, i) => { const m = pMetrics(p);
         const head = (i === 0 || stageOf(pp[i - 1]) !== stageOf(p)) ? [h("tr", { class: "stage-row" }, h("td", { colspan: "6", text: PSTAGES[stageOf(p)][1] + " · " + pp.filter(x => stageOf(x) === stageOf(p)).length }))] : [];
         return [...head, h("tr", null,
-        h("td", null, h("button", { class: "linkish", type: "button", text: studentName(p.studentId), onclick: () => { select(p.studentId); focusPaper(p.id); } })),
+        h("td", null, h("button", { class: "linkish", type: "button", text: studentName(p.studentId), onclick: () => { select(p.studentId); focusPaper(p.id); } }),
+          (p.coauthors || []).filter(nameOf).length ? h("div", { class: "muted", style: "font-size:0.8rem", text: "with " + (p.coauthors || []).map(nameOf).filter(Boolean).join(", ") }) : null),
         h("td", { text: p.title }),
         h("td", { text: p.venue || "—" }),
         h("td", null, pChip(pStatus(p))), h("td", { class: "num", text: m.review == null ? "—" : m.review + "d" }),
@@ -627,7 +628,18 @@ function refreshGroupPage(g) {
 /* ---------- publications ---------- */
 function P(kind, item) { return "students/" + item.studentId + "/" + kind + "/" + item.id; }
 function C(kind, sid) { return "students/" + sid + "/" + kind; }
-function papersOf(sid) { return S.papers.filter(p => !sid || p.studentId === sid); }
+/** A student's papers: the ones they added plus the ones where a labmate listed them as co-author. */
+function papersOf(sid) { return S.papers.filter(p => !sid || p.studentId === sid || (p.coauthors || []).includes(sid)); }
+function ownPapers(sid) { return S.papers.filter(p => p.studentId === sid); }
+function canEditPaper(p) { return S.canWrite && (S.isOwner || p.studentId === myKey()); }
+/** Name of anyone in the lab (the supervisor sees all records; students get names from the lab list). */
+function nameOf(key) { const s = S.students.find(x => x.id === key); if (s && s.name) return s.name; const m = labMembers().find(x => x.key === key); return m && m.name ? m.name : ""; }
+function authorLine(p) {
+  if (p.authors) return p.authors;
+  const names = [nameOf(p.studentId), ...(p.coauthors || []).map(nameOf)].filter(Boolean);
+  if (p.externalAuthors) names.push(p.externalAuthors);
+  return names.join(", ");
+}
 function pStatus(p) { return normStatus(p.status); }
 function pActive(p) { return !["Published", "Rejected"].includes(pStatus(p)); }
 function inReview(p) { return ["Submitted", "Under review", "Revision"].includes(pStatus(p)); }
@@ -684,9 +696,9 @@ function paperCard(p) {
     h("summary", null,
       h("div", { style: "min-width:0" },
         h("div", { class: "t-title", text: p.title }),
-        h("div", { class: "t-sub" }, pChip(st), h("span", { class: "chip plain", text: p.type || "Journal article" }),
+        h("div", { class: "t-sub" }, pChip(st), p.studentId !== S.sel ? h("span", { class: "chip coauth", text: "Co-author" }) : null, h("span", { class: "chip plain", text: p.type || "Journal article" }),
           p.venue ? h("span", { class: "p-venue", text: (st === "Currently writing" ? "Target: " : "") + p.venue }) : h("span", { class: "muted", text: st === "Currently writing" ? "Target venue not set" : "Venue not set" }),
-          p.authors ? h("span", { class: "who", text: p.authors }) : null),
+          authorLine(p) ? h("span", { class: "who", text: authorLine(p) }) : null),
         latestFeedback(p)),
       h("div", { class: "t-right" },
         h("span", { class: "days " + m.cls, text: m.reviewLabel }),
@@ -697,15 +709,20 @@ function paperCard(p) {
   const body = h("div", { class: "t-body" },
     h("div", { class: "linkbtns" },
       p.overleaf ? h("a", { class: "btn small overleaf", href: p.overleaf, target: "_blank", rel: "noopener", text: "Open draft in Overleaf ↗" })
-        : h("span", { class: "note", text: "No Overleaf link yet. Add it under \"Edit paper details\"." })),
-    h("p", { class: "note", text: [p.type || "Journal article", p.venue ? (pStatus(p) === "Currently writing" ? "Target venue: " : "Venue: ") + p.venue : null, p.authors ? "Authors: " + p.authors : null].filter(Boolean).join("  ·  ") }),
+        : h("span", { class: "note", text: canEditPaper(p) ? "No Overleaf link yet. Add it under \"Edit paper details\"." : "No Overleaf link yet." })),
+    h("p", { class: "note", text: [p.type || "Journal article", p.venue ? (pStatus(p) === "Currently writing" ? "Target venue: " : "Venue: ") + p.venue : null, authorLine(p) ? "Authors: " + authorLine(p) : null].filter(Boolean).join("  ·  ") }),
+    (p.coauthors || []).filter(nameOf).length || p.studentId !== S.sel ? h("div", { class: "coauth-row" },
+      h("span", { class: "label", text: "In the lab" }),
+      h("span", { class: "chip plain", text: (nameOf(p.studentId) || "Student") + " · added it" }),
+      ...(p.coauthors || []).filter(nameOf).map(k => h("span", { class: "chip coauth", text: nameOf(k) + " · co-author" }))) : null,
+    !canEditPaper(p) && S.canWrite ? h("p", { class: "note", text: "You're a co-author on this paper. " + (nameOf(p.studentId) || "The student who added it") + " and the supervisor keep it up to date." }) : null,
     h("div", { style: "display:grid;gap:8px" }, h("div", { class: "label", text: "Status timeline" }),
       hist.length ? h("ol", { class: "hist" }, hist.map(x => h("li", null,
         h("div", { class: "h-top" }, h("span", { class: "h-date", text: fmtD(x.date) }), pChip(x.status),
           h("span", { class: "who", text: x.via === "meeting" ? "Meeting update" : x.via === "added" ? "Added" : "Direct update" }), h("span", { class: "who", text: x.byName ? "by " + x.byName : "" })),
         remarkEl(x)))) : h("p", { class: "note", text: "No status changes yet." })),
-    S.canWrite ? paperStatusForm(p) : null,
-    S.canWrite ? h("details", { class: "sub" }, h("summary", { text: "Edit paper details" }), paperEditForm(p)) : null);
+    canEditPaper(p) ? paperStatusForm(p) : null,
+    canEditPaper(p) ? h("details", { class: "sub" }, h("summary", { text: "Edit paper details" }), paperEditForm(p)) : null);
   card.append(body);
   return card;
 }
@@ -724,7 +741,7 @@ function paperStatusForm(p) {
     h("label", { class: "fieldlabel" }, S.isOwner ? "Supervisor feedback (highlighted for the student)" : "Remark", h("input", { id: "psr-" + id, maxlength: "500", placeholder: "e.g. Reviewer 2 asked for comparison with baseline X" })),
     h("div", null, h("button", { class: "btn", type: "submit", text: "Save status" })));
 }
-function paperFields(prefix, p) {
+function paperFields(prefix, p, ownerSid) {
   p = p || {}; const sm = p.summary || {};
   const sel = (id, opts, v) => { const s = h("select", { id }, opts.map(x => h("option", { value: x, text: x }))); s.value = v || opts[0]; return s; };
   return [
@@ -733,11 +750,36 @@ function paperFields(prefix, p) {
     h("div", { class: "row" },
       h("label", { class: "fieldlabel" }, "Venue: journal or conference (target, if still writing)", h("input", { id: prefix + "venue", maxlength: "300", value: p.venue || "", placeholder: "e.g. IEEE Transactions on Power Systems" })),
       h("label", { class: "fieldlabel" }, "Type", sel(prefix + "type", PTYPES, p.type))),
-    h("label", { class: "fieldlabel" }, "Authors (in order)", h("input", { id: prefix + "authors", maxlength: "500", value: p.authors || "", placeholder: "P. Sharma, A. Kalita, …" })),
+    coauthorPicker(prefix, ownerSid, p.coauthors || []),
+    h("label", { class: "fieldlabel" }, "Co-authors outside the lab", h("input", { id: prefix + "external", maxlength: "500", value: p.externalAuthors || "", placeholder: "e.g. R. Gupta (IIT Delhi), M. Chen (NUS)" })),
+    h("label", { class: "fieldlabel" }, "Full author list in order (optional, as it appears on the paper)", h("input", { id: prefix + "authors", maxlength: "500", value: p.authors || "", placeholder: "Leave empty to use the names above" })),
 ];
 }
+/** Drop-down of lab members; each one picked becomes a removable chip. The paper then appears in their Publications too. */
+function coauthorPicker(prefix, ownerSid, chosen) {
+  const box = h("div", { class: "coauth-pick", id: prefix + "coauthors", "data-keys": JSON.stringify(chosen) });
+  const sel = h("select", { "aria-label": "Add a co-author from the lab" });
+  const draw = () => {
+    const keys = JSON.parse(box.dataset.keys || "[]");
+    const people = (labMembers().length ? labMembers() : S.students.map(x => ({ key: x.id, name: x.name, course: courseOf(x) }))).filter(m => m.key !== ownerSid && m.name);
+    const left = people.filter(m => !keys.includes(m.key));
+    sel.replaceChildren(h("option", { value: "", text: left.length ? "Add a co-author from WiNDS Lab…" : people.length ? "Everyone in the lab is added" : "No other lab members yet" }),
+      ...COURSES.map(c => [c, left.filter(m => (m.course || "PhD") === c)]).filter(([, l]) => l.length).map(([c, l]) => h("optgroup", { label: c }, l.map(m => h("option", { value: m.key, text: m.name })))));
+    sel.disabled = !left.length;
+    chips.replaceChildren(...keys.map(k => h("span", { class: "chip coauth removable" }, nameOf(k) || k.toUpperCase(),
+      h("button", { type: "button", "aria-label": "Remove " + (nameOf(k) || k) + " as co-author", text: "×", onclick: () => { box.dataset.keys = JSON.stringify(keys.filter(x => x !== k)); draw(); box.dispatchEvent(new Event("input", { bubbles: true })); } }))));
+  };
+  const chips = h("div", { class: "coauth-chips" });
+  sel.onchange = () => { if (!sel.value) return; const keys = JSON.parse(box.dataset.keys || "[]"); keys.push(sel.value); box.dataset.keys = JSON.stringify(keys); draw(); box.dispatchEvent(new Event("input", { bubbles: true })); };
+  box.append(h("span", { class: "fieldlabel-text", text: "Co-authors from the lab" }), h("div", { class: "coauth-line" }, sel, chips),
+    h("span", { class: "note", text: "The paper also appears in their Publications, marked “Co-author”." }));
+  draw();
+  return box;
+}
 function readPaperFields(prefix) {
+  const cb = document.getElementById(prefix + "coauthors");
   return { title: val(prefix + "title").trim(), authors: val(prefix + "authors").trim(), type: val(prefix + "type"),
+    coauthors: cb ? JSON.parse(cb.dataset.keys || "[]") : [], externalAuthors: val(prefix + "external").trim(),
     venue: val(prefix + "venue").trim(), overleaf: cleanUrl(val(prefix + "overleaf")) };
 }
 function paperEditForm(p) {
@@ -746,7 +788,7 @@ function paperEditForm(p) {
       e.preventDefault(); const d = readPaperFields(prefix); if (!d.title) { say("The paper needs a title."); return; }
       const ok = await write(db => db.doc(P("papers", p)).update(d), "Paper details saved");
       if (ok) { S.dirtyPapers.delete(p.id); const s = S.students.find(x => x.id === S.sel); if (s) refreshStudent(s); }
-    } }, paperFields(prefix, p),
+    } }, paperFields(prefix, p, p.studentId),
     h("div", { class: "row", style: "align-items:center" }, h("div", null, h("button", { class: "btn", type: "submit", text: "Save details" })), h("div", { style: "text-align:right" }, delPaperBtn(p))));
 }
 function delPaperBtn(p) {
@@ -765,11 +807,12 @@ function paperAddForm(s) {
         history: [{ date, status, remark: "Paper added", via: "added", by: S.uid, byName: S.myName, byRole: S.myRole }] };
       Object.assign(base, stampDates({}, status, date));
           const ok = await write(db => db.collection(C("papers", s.id)).add(base), "Paper added");
-      if (ok) { e.target.reset(); document.getElementById("np-date").value = todayStr(); sel.value = "Currently writing"; e.target.closest("details").open = false; }
+      if (ok) { e.target.reset(); document.getElementById("np-date").value = todayStr(); sel.value = "Currently writing"; const cb = document.getElementById("np-coauthors"); if (cb) { cb.replaceWith(coauthorPicker("np-", s.id, [])); } e.target.closest("details").open = false;
+        if (d.coauthors.length) say("Paper added. It also appears for " + d.coauthors.map(nameOf).filter(Boolean).join(", ") + "."); }
     } },
     h("div", { class: "row" }, h("label", { class: "fieldlabel" }, "Where is this paper now?", sel),
       h("label", { class: "fieldlabel" }, "Since (started / submitted / accepted on)", h("input", { type: "date", id: "np-date", value: todayStr() }))),
-    paperFields(prefix, null),
+    paperFields(prefix, null, s.id),
     h("div", null, h("button", { class: "btn", type: "submit", text: "Add paper" })));
 }
 
@@ -1045,7 +1088,7 @@ function showTab() {
 }
 let pupdSig = null;
 function refreshPaperRows(s) {
-  const act = papersOf(s.id).filter(pActive);
+  const act = ownPapers(s.id).filter(pActive);
   const sig = act.map(p => p.id).join(",");
   if (sig === pupdSig) return; pupdSig = sig;
   const keep = {};
@@ -1542,7 +1585,11 @@ function select(id, taskId) { S.sel = id; builtFor = null; S.filter = "all"; ren
 
 /* ---------- start-up: sign-in check, role, live data ---------- */
 const subs = {};
-function rebuildFlat() { for (const k of ["tasks", "meetings", "papers", "refs", "schedule", "leaves", "messages", "msgstate"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []); }
+function rebuildFlat() {
+  for (const k of ["tasks", "meetings", "papers", "refs", "schedule", "leaves", "messages", "msgstate"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []);
+  const have = new Set(S.papers.map(p => p.studentId + "/" + p.id));
+  S.papers.push(...(S.sharedPapers || []).filter(p => !have.has(p.studentId + "/" + p.id)));   // papers a labmate added with this student as co-author
+}
 function watchStudent(sid) {
   if (subs[sid]) return;
   const entry = subs[sid] = { data: {}, un: [] };
@@ -1722,6 +1769,9 @@ export async function start(pageRole) {
       S.myName = snap.data().name || S.myName;
       showAccount(S.myName, "Student · " + (snap.data().admissionNo || key.toUpperCase()) + " · " + courseOf(snap.data()));
       watchStudent(key); S.sel = key;
+      if (!S.sharedSub) S.sharedSub = db.collectionGroup("papers").onSnapshot(sn => {
+        S.sharedPapers = sn.docs.filter(d => d.owner !== key).map(d => ({ ...d.data(), id: d.id, studentId: d.owner, shared: true })); rebuildFlat(); renderAll();
+      }, () => {});
       if (!snap.metadata.fromCache) { S.loaded = NCOLL; clearTimeout(S.timer); }
       renderAll();
     }, err => { S.loaded = NCOLL; renderAll(); say("Couldn't load your record (" + (err.code || "error") + ")."); });

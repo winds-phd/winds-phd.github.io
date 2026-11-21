@@ -537,3 +537,16 @@ ul.inbox { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .grp-member .muted { font-size: 0.78rem; font-family: var(--f-mono); }
 .grp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- lab co-authors on papers ---------- */
+.chip.coauth { background: var(--pubs-bg); color: var(--pubs-ink); border: 1px solid var(--pubs-line); }
+.coauth-pick { display: grid; gap: 6px; }
+.fieldlabel-text { font-size: 0.85rem; color: var(--muted); }
+.coauth-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.coauth-line select { width: auto; max-width: 100%; flex: 0 1 280px; }
+.coauth-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip.removable { display: inline-flex; align-items: center; gap: 4px; padding-right: 4px; }
+.chip.removable button { border: 0; background: none; color: inherit; font-size: 1rem; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: 50%; }
+.chip.removable button:hover, .chip.removable button:focus-visible { background: var(--pubs-line); outline: none; }
+.coauth-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.coauth-row .label { margin-right: 4px; }

@@ -63,6 +63,13 @@ A private conversation between you and each student. Only the two of you can rea
 - Enter sends, Shift+Enter starts a new line. "✓ Seen" appears under your last message once the other person has opened the conversation. You can delete your own messages (you can also delete a student's); messages can't be edited.
 - New messages show up in the bell and as "N new" counts on the tab, the left column and the student's name. **No email is sent for messages.**
 
+## Co-authors on papers
+When adding or editing a paper there are two co-author fields:
+- **Co-authors from the lab:** a drop-down of everyone registered (grouped by course); each pick becomes a chip you can remove with ×. The paper then also appears in each co-author's Publications, marked **Co-author**, and counts towards their Draft / Submitted / Accepted numbers. They get a bell alert when added and whenever the paper's status changes.
+- **Co-authors outside the lab:** free text, e.g. "R. Gupta (IIT Delhi), M. Chen (NUS)".
+- Optional **Full author list in order** if the exact order matters; otherwise the names above are used.
+- Only the student who added the paper and the supervisor can change it; co-authors see it read-only. On the overview, each paper is listed once, with "with <co-authors>" under the student's name.
+
 ## Group messages
 You create groups and choose their members. Students can't create or change groups.
 - **Create:** Messages (left column) → **+ New group** → name it (e.g. "PhD group", "Masters group", "Simulation team") and tick the students. "Select all PhD" / "Select all Masters" buttons tick a whole course at once; a group can mix courses.

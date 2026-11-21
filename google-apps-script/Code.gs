@@ -208,7 +208,7 @@ function dispatch_(action, req) {
       if (req.rev && req.rev === rev) return { unchanged: true, rev: rev };
       const docs = loadDocs_().list.filter(d => canSee_(u, d.path.split("/")));
       let activity = []; try { activity = readActivity_(u); } catch (e) { console.error(e); }
-      return { rev: rev, docs: docs.map(d => ({ path: d.path, data: d.data })), activity: activity };
+      return { rev: rev, docs: docs.map(d => ({ path: d.path, data: d.data })), activity: activity, lab: labDirectory_() };
     }
 
     case "get": {
@@ -224,9 +224,11 @@ function dispatch_(action, req) {
       let data = req.data;
       if (!data || typeof data !== "object" || Array.isArray(data)) fail_("invalid-argument", "A record must be an object.");
       const cur = getDoc_(path), prevRev = currentRev_();
+      if (u.role === "student" && segs[0] === "students" && segs[1] !== u.login.slice(8)) fail_("permission-denied", "Only the student who added this paper, or the supervisor, can change it.");
       if (segs[0] === "conferences" && u.role !== "supervisor" && cur && cur.createdBy !== u.login) fail_("permission-denied", "You can only change conference entries you added.");
       if (action === "update") { if (!cur) fail_("not-found", "That record no longer exists."); data = Object.assign({}, cur, data); }
       if (isLeave_(segs)) data = checkLeave_(u, cur, data);
+      if (segs[0] === "students" && segs[2] === "papers" && segs.length === 4) data.coauthors = cleanCoauthors_(data.coauthors, segs[1]);
       if (segs[0] === "students" && segs[2] === "messages") fail_("permission-denied", "Messages can't be edited. Delete it and send a new one.");
       if (segs[0] === "groups") data = checkGroupWrite_(u, segs, data);
       if (segs[0] === "students" && segs[2] === "msgstate") data = Object.assign({}, cur || {}, u.role === "supervisor" ? { supSeen: Number(data.supSeen) || 0 } : { stuSeen: Number(data.stuSeen) || 0 });
@@ -243,6 +245,7 @@ function dispatch_(action, req) {
       if (u.role === "student" && segs[0] === "students" && segs.length === 2) fail_("permission-denied", "Only the supervisor can remove a student.");
       if (u.role === "student" && segs[0] === "students" && segs[2] === "tasks") fail_("permission-denied", "Only the supervisor can delete tasks.");
       if (u.role === "student" && segs[0] === "students" && segs[2] === "schedule") fail_("permission-denied", "Only the supervisor can cancel scheduled meetings.");
+      if (u.role === "student" && segs[0] === "students" && segs[1] !== u.login.slice(8)) fail_("permission-denied", "Only the student who added this paper, or the supervisor, can delete it.");
       if (segs[0] === "groups" && u.role !== "supervisor" && !(segs[2] === "messages" && segs.length === 4 && (getDoc_(path) || {}).createdBy === u.login))
         fail_("permission-denied", segs.length === 2 ? "Only the supervisor can delete a group." : "You can only delete your own messages.");
       if (u.role === "student" && isLeave_(segs)) fail_("permission-denied", "Leave records can't be deleted. Withdraw a pending request instead.");
@@ -274,7 +277,8 @@ function dispatch_(action, req) {
         data = { text: text, createdAt: Date.now(), createdBy: u.login, byRole: u.role, byName: u.role === "supervisor" ? "Supervisor" : (u.name || "Student") };
       }
       if (segs[0] === "students" && segs[2] === "msgstate") fail_("invalid-argument", "Use set for read status.");
-      if (segs[0] === "groups") data = checkGroupAdd_(u, segs, data);   // record who added it, so only they (or the supervisor) can remove it
+      if (segs[0] === "groups") data = checkGroupAdd_(u, segs, data);
+      if (segs[0] === "students" && segs[2] === "papers" && segs.length === 3) data.coauthors = cleanCoauthors_(data.coauthors, segs[1]);   // record who added it, so only they (or the supervisor) can remove it
       const want = String(req.id || "");
       const id = SEGMENT.test(want) && want.length <= 40 ? want : Utilities.getUuid().replace(/-/g, "").slice(0, 20);
       if (getDoc_(segs.join("/") + "/" + id)) return { id: id, prevRev: currentRev_(), rev: currentRev_() };   // already saved: a repeated click or retry
@@ -297,6 +301,7 @@ function canSee_(u, segs) {
   if (u.role === "supervisor") return true;
   if (segs[0] === "conferences") return true;
   if (segs[0] === "groups") return segs.length >= 2 && isMember_(segs[1], u.login.slice("student:".length));
+  if (segs.length === 4 && segs[0] === "students" && segs[2] === "papers" && segs[1] !== u.login.slice(8)) return isCoauthor_(segs.join("/"), u.login.slice(8));
   return segs.length >= 2 && segs[0] === "students" && segs[1] === u.login.slice("student:".length);
 }
 function splitPath_(p) {
@@ -669,11 +674,15 @@ function logChange_(u, op, segs, before, after) {
   }
   if (kind === "papers") {
     base.tab = "papers";
+    const ownerName = u.role === "supervisor" ? "Supervisor" : who;
+    ((after || {}).coauthors || []).filter(k => ((before || {}).coauthors || []).indexOf(k) < 0).forEach(k =>
+      logActivity_(Object.assign({}, base, { student: k, text: ownerName + " added you as a co-author on " + t + (u.role === "supervisor" ? " (" + student + "'s paper)" : "") })));
     const st = s => s === "Currently writing" ? "Draft" : s;
     if (op === "add") return logActivity_(Object.assign(base, { text: who + " added a paper " + t + " (" + st(ex.status || "Currently writing") + ")" }));
     if (op === "delete") return logActivity_(Object.assign(base, { text: who + " removed the paper " + t }));
     const b = before || {}, a = after || {};
     const remark = (a.history || []).slice((b.history || []).length).filter(x => x.remark && AUTO_REMARKS.indexOf(x.remark) < 0).map(x => x.remark).pop();
+    if (b.status !== a.status) (a.coauthors || []).forEach(k => logActivity_(Object.assign({}, base, { student: k, text: "Paper you co-authored, " + t + ", moved to " + st(a.status) + " (by " + who + ")" })));
     if (b.status !== a.status) return logActivity_(Object.assign(base, { text: t + " moved to " + st(a.status) + (remark ? ": " + remark : "") + " (by " + who + ")" }));
     if (remark) return logActivity_(Object.assign(base, { text: (u.role === "supervisor" ? "Feedback on paper " : who + " commented on paper ") + t + ": " + remark }));
     if ((b.overleaf || "") !== (a.overleaf || "") && a.overleaf) return logActivity_(Object.assign(base, { text: who + " added the Overleaf link for " + t }));
@@ -799,4 +808,17 @@ function checkGroupAdd_(u, segs, d) {
     return { text: text, createdAt: Date.now(), createdBy: u.login, byRole: u.role, byName: u.role === "supervisor" ? "Supervisor" : (u.name || "Student") };
   }
   fail_("invalid-argument", "Unknown group record.");
+}
+
+
+/* ================================================================ lab co-authors on papers
+ *  students/<owner>/papers/<id>.coauthors = [student keys]. Each lab co-author can READ that paper (it shows in
+ *  their Publications as "Co-author"); only the owner and the supervisor can change it. Co-authors outside the lab
+ *  are plain text (externalAuthors). The sync reply carries a small lab directory (name, course) for the drop-down.
+ */
+function isCoauthor_(path, key) { const d = getDoc_(path); return !!d && Array.isArray(d.coauthors) && d.coauthors.indexOf(key) >= 0; }
+function cleanCoauthors_(v, owner) { return (Array.isArray(v) ? v : []).map(String).filter((k, i, a) => SEGMENT.test(k) && k !== owner && a.indexOf(k) === i).slice(0, 30); }
+function labDirectory_() {
+  return loadDocs_().list.filter(d => /^students\/[^/]+$/.test(d.path))
+    .map(d => ({ key: d.path.slice(9), name: (d.data || {}).name || "", course: (d.data || {}).course || (d.data || {}).stage || "PhD" }));
 }
