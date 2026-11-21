@@ -63,6 +63,14 @@ A private conversation between you and each student. Only the two of you can rea
 - Enter sends, Shift+Enter starts a new line. "✓ Seen" appears under your last message once the other person has opened the conversation. You can delete your own messages (you can also delete a student's); messages can't be edited.
 - New messages show up in the bell and as "N new" counts on the tab, the left column and the student's name. **No email is sent for messages.**
 
+## Group messages
+You create groups and choose their members. Students can't create or change groups.
+- **Create:** Messages (left column) → **+ New group** → name it (e.g. "PhD group", "Masters group", "Simulation team") and tick the students. "Select all PhD" / "Select all Masters" buttons tick a whole course at once; a group can mix courses.
+- **Where groups appear:** for you, at the top of the Messages page; for each member, as a chip next to "Supervisor" on their Messages tab. Students see only the groups they belong to.
+- **Chat:** everyone in the group reads and posts; each message shows the sender's name. Unread counts only, bell alerts, **no emails**. Members can delete their own posts; you can delete any post.
+- **Change or remove:** open the group → **Edit name & members**. A student you add sees the group's earlier messages; a student you remove loses access to the group straight away. **Delete group** removes it and all its messages.
+- New students aren't added to groups automatically; edit the group to include them.
+
 ## Profile & leave
 Each student has a **Profile & leave** tab: name, admission number, course, year of admission, research topic, co-supervisor, email and phone (editable with **Edit profile**), followed by their leave record.
 - **Students apply for leave:** first day, last day, type (Personal, Medical, Academic, Family / emergency, Other) and a reason. **Every calendar day counts, Saturdays and Sundays included** (Fri 20 to Mon 23 = 4 days). Overlapping dates are refused with a message. A request can be withdrawn while it's still pending.

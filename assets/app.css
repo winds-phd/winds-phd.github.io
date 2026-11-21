@@ -513,3 +513,27 @@ ul.inbox { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .inbox-prev { color: var(--muted); font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 560px) { .msg { max-width: 88%; } .msg-list { max-height: 60vh; padding: 10px; } }
 .r-item.r-msg[aria-current="true"] { border-color: var(--msg-ink); box-shadow: inset 3px 0 0 var(--msg-ink); background: var(--msg-bg); }
+.tabs button.tab-messages .n:not(:empty) { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--msg-ink); color: var(--msg-bg); font-weight: 600; text-align: center; line-height: 18px; }
+
+/* ---------- group conversations ---------- */
+.inbox-page, .group-page { display: grid; gap: 20px; }
+.thread-bar { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--msg-line); scrollbar-width: thin; }
+.thread-chip { flex: none; display: grid; grid-template-columns: auto auto; column-gap: 8px; align-items: center; text-align: left; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--msg-line); background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; }
+.thread-chip .tc-name { font-weight: 600; font-size: 0.9rem; }
+.thread-chip .tc-sub { grid-column: 1; font-size: 0.72rem; color: var(--muted); }
+.thread-chip .chip { grid-column: 2; grid-row: 1 / span 2; }
+.thread-chip[aria-selected="true"] { border-color: var(--msg-ink); box-shadow: inset 0 -3px 0 var(--msg-ink); background: var(--msg-bg); }
+.thread-chip:focus-visible { outline: 2px solid var(--msg-ink); outline-offset: 2px; }
+.msg-from { font-size: 0.75rem; font-weight: 600; color: var(--msg-ink); padding: 0 4px; }
+.msg-from.sup { color: var(--accent); }
+.inbox-av.grp { border-radius: 10px; background: var(--msg-ink); color: var(--msg-bg); border-color: var(--msg-ink); }
+.grp-picker { display: grid; gap: 10px; }
+.grp-course { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 10px; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 16px; }
+.grp-course legend { display: flex; gap: 12px; align-items: baseline; padding: 0 6px; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--msg-ink); }
+.grp-course legend .textlink { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.grp-member { display: flex; gap: 8px; align-items: center; min-width: 0; padding: 3px 0; cursor: pointer; }
+.grp-member input { width: auto; margin: 0; }
+.grp-member span:nth-of-type(1) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grp-member .muted { font-size: 0.78rem; font-family: var(--f-mono); }
+.grp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.row-btns { display: flex; gap: 8px; flex-wrap: wrap; }

@@ -227,6 +227,9 @@ function dispatch_(action, req) {
       if (segs[0] === "conferences" && u.role !== "supervisor" && cur && cur.createdBy !== u.login) fail_("permission-denied", "You can only change conference entries you added.");
       if (action === "update") { if (!cur) fail_("not-found", "That record no longer exists."); data = Object.assign({}, cur, data); }
       if (isLeave_(segs)) data = checkLeave_(u, cur, data);
+      if (segs[0] === "students" && segs[2] === "messages") fail_("permission-denied", "Messages can't be edited. Delete it and send a new one.");
+      if (segs[0] === "groups") data = checkGroupWrite_(u, segs, data);
+      if (segs[0] === "students" && segs[2] === "msgstate") data = Object.assign({}, cur || {}, u.role === "supervisor" ? { supSeen: Number(data.supSeen) || 0 } : { stuSeen: Number(data.stuSeen) || 0 });
       putDoc_(path, data); const rev = bumpRev_();
       if (isLeave_(segs)) safely_(() => notifyLeave_(segs[1], u, cur, data));
       if (u.role === "supervisor" && segs[0] === "students" && segs.length === 4 && (segs[2] === "tasks" || segs[2] === "papers")) safely_(() => notifyFeedback_(segs[1], segs[2], cur, data));
@@ -240,13 +243,16 @@ function dispatch_(action, req) {
       if (u.role === "student" && segs[0] === "students" && segs.length === 2) fail_("permission-denied", "Only the supervisor can remove a student.");
       if (u.role === "student" && segs[0] === "students" && segs[2] === "tasks") fail_("permission-denied", "Only the supervisor can delete tasks.");
       if (u.role === "student" && segs[0] === "students" && segs[2] === "schedule") fail_("permission-denied", "Only the supervisor can cancel scheduled meetings.");
+      if (segs[0] === "groups" && u.role !== "supervisor" && !(segs[2] === "messages" && segs.length === 4 && (getDoc_(path) || {}).createdBy === u.login))
+        fail_("permission-denied", segs.length === 2 ? "Only the supervisor can delete a group." : "You can only delete your own messages.");
       if (u.role === "student" && isLeave_(segs)) fail_("permission-denied", "Leave records can't be deleted. Withdraw a pending request instead.");
-      if (u.role === "student" && segs[0] === "students" && (segs[2] === "meetings" || segs[2] === "refs") && segs.length === 4 && (getDoc_(path) || {}).createdBy && getDoc_(path).createdBy !== u.login)
+      if (u.role === "student" && segs[0] === "students" && (segs[2] === "meetings" || segs[2] === "refs" || segs[2] === "messages") && segs.length === 4 && (getDoc_(path) || {}).createdBy && getDoc_(path).createdBy !== u.login)
         fail_("permission-denied", "Only the person who added this, or the supervisor, can delete it.");
       if (segs[0] === "conferences" && u.role !== "supervisor" && (getDoc_(path) || {}).createdBy !== u.login) fail_("permission-denied", "You can only remove conference entries you added.");
       const prevRev = currentRev_(), old = getDoc_(path);
       deleteDoc_(path);
       safely_(() => logChange_(u, "delete", segs, old, null));
+      if (u.role === "supervisor" && segs.length === 2 && segs[0] === "groups") deletePrefix_(path + "/");
       if (u.role === "supervisor" && segs.length === 2 && segs[0] === "students") {
         deletePrefix_(path + "/");
         deleteUser_("student:" + segs[1]);
@@ -260,7 +266,15 @@ function dispatch_(action, req) {
       let data = req.data;
       if (!data || typeof data !== "object" || Array.isArray(data)) fail_("invalid-argument", "A record must be an object.");
       if (segs[0] === "conferences") data.createdBy = u.login;
-      if (segs[0] === "students" && segs[2] === "leaves" && segs.length === 3) data = checkLeave_(u, null, data);   // record who added it, so only they (or the supervisor) can remove it
+      if (segs[0] === "students" && segs[2] === "leaves" && segs.length === 3) data = checkLeave_(u, null, data);
+      if (segs[0] === "students" && segs[2] === "messages" && segs.length === 3) {
+        const text = String(data.text || "").trim();
+        if (!text) fail_("invalid-argument", "The message is empty.");
+        if (text.length > 4000) fail_("invalid-argument", "Keep a message under 4000 characters.");
+        data = { text: text, createdAt: Date.now(), createdBy: u.login, byRole: u.role, byName: u.role === "supervisor" ? "Supervisor" : (u.name || "Student") };
+      }
+      if (segs[0] === "students" && segs[2] === "msgstate") fail_("invalid-argument", "Use set for read status.");
+      if (segs[0] === "groups") data = checkGroupAdd_(u, segs, data);   // record who added it, so only they (or the supervisor) can remove it
       const want = String(req.id || "");
       const id = SEGMENT.test(want) && want.length <= 40 ? want : Utilities.getUuid().replace(/-/g, "").slice(0, 20);
       if (getDoc_(segs.join("/") + "/" + id)) return { id: id, prevRev: currentRev_(), rev: currentRev_() };   // already saved: a repeated click or retry
@@ -282,6 +296,7 @@ function dispatch_(action, req) {
 function canSee_(u, segs) {
   if (u.role === "supervisor") return true;
   if (segs[0] === "conferences") return true;
+  if (segs[0] === "groups") return segs.length >= 2 && isMember_(segs[1], u.login.slice("student:".length));
   return segs.length >= 2 && segs[0] === "students" && segs[1] === u.login.slice("student:".length);
 }
 function splitPath_(p) {
@@ -603,7 +618,7 @@ function readActivity_(u) {
   for (let i = v.length - 1; i >= 0 && out.length < 60; i--) {
     const r = v[i], e = { ts: Number(r[0]), actor: String(r[1]), actorName: String(r[2]), role: String(r[3]), student: String(r[4]), scope: String(r[5]), tab: String(r[6]), text: String(r[7]) };
     if (!e.ts || e.actor === u.login) continue;
-    if (u.role === "supervisor" || e.scope === "all" || e.student === myKey) out.push(e);
+    if (u.role === "supervisor" || e.scope === "all" || (e.scope === "group" ? isMember_(e.student, myKey) : e.student === myKey)) out.push(e);
   }
   return out;
 }
@@ -616,6 +631,18 @@ function logChange_(u, op, segs, before, after) {
   const ex = after || before || {};
   if (segs[0] === "conferences") {
     if (op === "add") logActivity_(Object.assign(base, { scope: "all", tab: "confs", text: who + " added a conference: " + q(ex.name) + (ex.deadline ? ", deadline " + ex.deadline : "") }));
+    return;
+  }
+  if (segs[0] === "groups") {
+    const g = (segs.length === 2 ? ex : getDoc_("groups/" + segs[1])) || {}, gname = "“" + (g.name || "group") + "”";
+    Object.assign(base, { scope: "group", student: segs[1], tab: "group:" + segs[1] });
+    if (segs.length === 2 && op === "add") return logActivity_(Object.assign(base, { text: "Supervisor added you to the group " + gname }));
+    if (segs.length === 2 && op === "update" && before && after) {
+      if (JSON.stringify(before.members || []) !== JSON.stringify(after.members || [])) return logActivity_(Object.assign(base, { text: "Supervisor changed the members of " + gname }));
+      if (before.name !== after.name) return logActivity_(Object.assign(base, { text: "Group " + q(before.name) + " renamed to " + gname }));
+      return;
+    }
+    if (segs[2] === "messages" && op === "add") return logActivity_(Object.assign(base, { text: who + " in " + gname + ": " + (ex.text.length > 140 ? ex.text.slice(0, 140) + "…" : ex.text) }));
     return;
   }
   if (segs[0] !== "students") return;                       // supervisor's own items, lab code: no notifications
@@ -654,6 +681,11 @@ function logChange_(u, op, segs, before, after) {
   }
   if (kind === "meetings" && op === "add") return logActivity_(Object.assign(base, { tab: "meetings", text: who + " recorded a meeting (" + (ex.date || "") + ")" + ((ex.newTasks || []).length ? " with " + ex.newTasks.length + " action item" + (ex.newTasks.length > 1 ? "s" : "") : "") }));
   if (kind === "refs" && op === "add") return logActivity_(Object.assign(base, { tab: "refs", text: who + " added an article " + t + (ex.venue ? " (" + ex.venue + ")" : "") }));
+  if (kind === "messages") {
+    if (op !== "add") return;
+    const pv = ex.text.length > 140 ? ex.text.slice(0, 140) + "…" : ex.text;
+    return logActivity_(Object.assign(base, { tab: "messages", text: (u.role === "supervisor" ? "Message from your supervisor: " : who + " sent you a message: ") + pv }));
+  }
   if (kind === "leaves") {
     base.tab = "profile";
     const span = leaveSpan_(ex), b = before || {}, a = after || {};
@@ -727,4 +759,44 @@ function notifyLeave_(key, u, before, after) {
     if (after.remark) lines.push("Supervisor's note:\n" + after.remark);
     sendMail_(to, "Leave " + after.status.toLowerCase() + ": " + span, name, lines, STUDENT_LINK_());
   }
+}
+
+
+/* ================================================================ personal messages
+ *  students/<key>/messages/<id>: one private conversation between the supervisor and each student.
+ *  students/<key>/msgstate/state: { supSeen, stuSeen } — when each side last read it ("Seen" marks, unread counts).
+ *  No emails for messages: the other side sees them through the bell and the unread counts.
+ */
+
+
+/* ================================================================ group conversations
+ *  groups/<gid>: { name, members: [student keys] }  — created and changed only by the supervisor.
+ *  groups/<gid>/messages/<id>: posts by the supervisor or any member. groups/<gid>/seen/<"sup" | student key>: { ts }.
+ *  A student sees a group (and its messages) only while they are a member. No emails for group messages.
+ */
+function isMember_(gid, key) { const g = getDoc_("groups/" + gid); return !!g && Array.isArray(g.members) && g.members.indexOf(key) >= 0; }
+function cleanGroup_(d) {
+  const name = String(d.name || "").trim().slice(0, 80);
+  if (!name) fail_("invalid-argument", "Give the group a name.");
+  const members = (Array.isArray(d.members) ? d.members : []).map(String).filter((k, i, a) => SEGMENT.test(k) && a.indexOf(k) === i);
+  return { name: name, members: members, createdAt: Number(d.createdAt) || Date.now(), updatedAt: Date.now() };
+}
+function checkGroupWrite_(u, segs, d) {
+  if (segs.length === 2) { if (u.role !== "supervisor") fail_("permission-denied", "Only the supervisor can create or change groups."); return cleanGroup_(d); }
+  if (segs[2] === "messages") fail_("permission-denied", "Messages can't be edited. Delete it and send a new one.");
+  if (segs[2] === "seen" && segs.length === 4) {
+    if (segs[3] !== (u.role === "supervisor" ? "sup" : u.login.slice(8))) fail_("permission-denied", "You can only mark your own messages as read.");
+    return { ts: Number(d.ts) || 0 };
+  }
+  fail_("invalid-argument", "Unknown group record.");
+}
+function checkGroupAdd_(u, segs, d) {
+  if (segs.length === 1) { if (u.role !== "supervisor") fail_("permission-denied", "Only the supervisor can create groups."); return cleanGroup_(d); }
+  if (segs[2] === "messages" && segs.length === 3) {
+    const text = String(d.text || "").trim();
+    if (!text) fail_("invalid-argument", "The message is empty.");
+    if (text.length > 4000) fail_("invalid-argument", "Keep a message under 4000 characters.");
+    return { text: text, createdAt: Date.now(), createdBy: u.login, byRole: u.role, byName: u.role === "supervisor" ? "Supervisor" : (u.name || "Student") };
+  }
+  fail_("invalid-argument", "Unknown group record.");
 }
