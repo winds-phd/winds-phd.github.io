@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261121-1500";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261121-1520";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -763,15 +763,19 @@ function coauthorPicker(prefix, ownerSid, chosen) {
     const keys = JSON.parse(box.dataset.keys || "[]");
     const people = (labMembers().length ? labMembers() : S.students.map(x => ({ key: x.id, name: x.name, course: courseOf(x) }))).filter(m => m.key !== ownerSid && m.name);
     const left = people.filter(m => !keys.includes(m.key));
-    sel.replaceChildren(h("option", { value: "", text: left.length ? "Add a co-author from WiNDS Lab…" : people.length ? "Everyone in the lab is added" : "No other lab members yet" }),
+    const noList = !labMembers().length && !S.isOwner;          // the server didn't send the lab list (old Code.gs deployed)
+    warn.hidden = !noList;
+    sel.replaceChildren(h("option", { value: "", text: left.length ? "Add a co-author from WiNDS Lab…" : noList ? "Lab member list not available" : people.length ? "Everyone in the lab is added" : "No other lab members yet" }),
       ...COURSES.map(c => [c, left.filter(m => (m.course || "PhD") === c)]).filter(([, l]) => l.length).map(([c, l]) => h("optgroup", { label: c }, l.map(m => h("option", { value: m.key, text: m.name })))));
     sel.disabled = !left.length;
     chips.replaceChildren(...keys.map(k => h("span", { class: "chip coauth removable" }, nameOf(k) || k.toUpperCase(),
       h("button", { type: "button", "aria-label": "Remove " + (nameOf(k) || k) + " as co-author", text: "×", onclick: () => { box.dataset.keys = JSON.stringify(keys.filter(x => x !== k)); draw(); box.dispatchEvent(new Event("input", { bubbles: true })); } }))));
   };
   const chips = h("div", { class: "coauth-chips" });
+  const warn = h("p", { class: "err", hidden: true, text: "The list of lab members didn't load. The supervisor needs to deploy the latest Code.gs as a new version of the existing web app (Deploy → Manage deployments → ✏️ → New version). Until then, type lab co-authors under “Co-authors outside the lab”." });
+  sel.addEventListener("focus", draw); sel.addEventListener("mousedown", () => { if (sel.options.length < 2) draw(); });
   sel.onchange = () => { if (!sel.value) return; const keys = JSON.parse(box.dataset.keys || "[]"); keys.push(sel.value); box.dataset.keys = JSON.stringify(keys); draw(); box.dispatchEvent(new Event("input", { bubbles: true })); };
-  box.append(h("span", { class: "fieldlabel-text", text: "Co-authors from the lab" }), h("div", { class: "coauth-line" }, sel, chips),
+  box.append(h("span", { class: "fieldlabel-text", text: "Co-authors from the lab" }), h("div", { class: "coauth-line" }, sel, chips), warn,
     h("span", { class: "note", text: "The paper also appears in their Publications, marked “Co-author”." }));
   draw();
   return box;

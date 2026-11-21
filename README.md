@@ -90,6 +90,11 @@ Each student has a **Profile & leave** tab: name, admission number, course, year
 - **Scheduled meetings → Repeats:** every week, every 2 weeks or every month, with an optional end date. Each occurrence gets its own 15-minute reminder email. Use **Cancel this one** to skip a single date, or **Cancel series** to stop it.
 - For group meetings you can tick **All PhD**, **All Masters** or **All B-Tech** instead of picking names.
 
+## Which Apps Script project holds your data (important)
+- **The site uses this web app link** (in `assets/config.js`): the one ending in **`…BQj1mDnuoA/exec`**. The project behind it is connected to the Sheet with all your records. **Always update that project:** paste the new Code.gs, then **Deploy → Manage deployments → ✏️ → New version → Deploy**. Never "New deployment"; that creates a different link.
+- **Not used:** the Gmail project "PhD Supervision Log" (link ending in `…lRHzd/exec`) and its Sheet "PhD Supervision Log — data" (`…/d/1OiA1o7…`) were never used for real data. If that project asks for a setup key or a supervisor sign-up, ignore it.
+- To check any project safely: run `init`. "Supervisor account already exists" means it's connected to your data; a SETUP KEY in the log means it isn't.
+
 ## In-app notifications (the bell)
 The 🔔 in the top bar shows changes made by the **other side**, with a red count of unread items:
 - **You see** what students do: joined the lab, added or finished a task, comments, papers added or moved (Draft → Submitted → Accepted), Overleaf links, articles, recorded meetings.
