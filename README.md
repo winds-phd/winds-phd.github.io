@@ -56,6 +56,13 @@ Send them `https://winds-phd.github.io/register.html` and the lab code. They reg
 ## Sections on each student's page
 Tasks (blue) · Publications (green) · Read articles: title, journal or conference name, and link (violet) · Conferences: shared by the whole group, anyone can add (rose) · Meetings (peach). Supervisor feedback is highlighted in yellow wherever it appears.
 
+## Personal messages
+A private conversation between you and each student. Only the two of you can read it.
+- **Students:** the **Messages** tab on their page.
+- **You:** **Messages** in the left column lists every student's conversation, unread ones first, with the latest message. Each student also has a **Messages** tab.
+- Enter sends, Shift+Enter starts a new line. "✓ Seen" appears under your last message once the other person has opened the conversation. You can delete your own messages (you can also delete a student's); messages can't be edited.
+- New messages show up in the bell and as "N new" counts on the tab, the left column and the student's name. **No email is sent for messages.**
+
 ## Profile & leave
 Each student has a **Profile & leave** tab: name, admission number, course, year of admission, research topic, co-supervisor, email and phone (editable with **Edit profile**), followed by their leave record.
 - **Students apply for leave:** first day, last day, type (Personal, Medical, Academic, Family / emergency, Other) and a reason. **Every calendar day counts, Saturdays and Sundays included** (Fri 20 to Mon 23 = 4 days). Overlapping dates are refused with a message. A request can be withdrawn while it's still pending.
