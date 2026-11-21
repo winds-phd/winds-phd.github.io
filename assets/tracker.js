@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261121-1415";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261121-1420";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
