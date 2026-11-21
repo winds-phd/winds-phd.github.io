@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity } from "./core.js?v=20261118-1400";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity } from "./core.js?v=20261121-1300";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -32,7 +32,7 @@ const PTYPES = ["Journal article", "Conference paper", "Review article", "Book c
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
-const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], leaves: [], leaveYear: new Date().getFullYear(), tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
+const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], leaves: [], messages: [], msgstate: [], leaveYear: new Date().getFullYear(), tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
 /** Wraps a form's submit handler: while it is saving, further clicks/Enter are ignored and the buttons are locked. */
 function guardSubmit(handler) {
@@ -163,6 +163,9 @@ function renderRoster() {
     h("button", { class: "r-item r-sched", type: "button", "aria-current": S.sel === "__sched" ? "true" : "false", onclick: () => select("__sched") },
       h("span", { class: "nm", text: "Scheduled meetings" }),
       h("span", { class: "meta", text: (() => { const n = upcomingSched().length; return n ? plural(n, "upcoming meeting") : "Plan group or individual meetings"; })() })),
+    h("button", { class: "r-item r-msg", type: "button", "aria-current": S.sel === "__msgs" ? "true" : "false", onclick: () => select("__msgs") },
+      h("span", { class: "nm" }, "Messages", unreadOf().length ? h("span", { class: "chip warn", style: "margin-left:8px", text: unreadOf().length + " new" }) : null),
+      h("span", { class: "meta", text: (() => { const n = S.students.filter(x => unreadOf(x.id).length).length; return n ? "From " + plural(n, "student") : "Private conversations with each student"; })() })),
     h("div", { class: "roster-sep label", text: "Students" })];
   for (const [course, list] of byCourse(S.students)) {
   items.push(h("div", { class: "course-head" }, h("span", { text: course }), h("span", { class: "mono", text: String(list.length) })));
@@ -175,7 +178,8 @@ function renderRoster() {
         h("span", { text: l ? "Met " + (diff(l, todayStr()) === 0 ? "today" : diff(l, todayStr()) + "d ago") : "No meetings yet" }),
         h("span", { text: open.length + " open · " + (mine.length - open.length) + " done" }),
         od ? h("span", { class: "chip bad", text: od + " overdue" }) : null,
-        pendingLeaves(s.id).length ? h("span", { class: "chip warn", text: "Leave request" }) : null)));
+        pendingLeaves(s.id).length ? h("span", { class: "chip warn", text: "Leave request" }) : null,
+        unreadOf(s.id).length ? h("span", { class: "chip msg", text: plural(unreadOf(s.id).length, "new message") }) : null)));
   }
   }
   document.getElementById("roster").replaceChildren(...items);
@@ -399,6 +403,103 @@ function pendingLeavePanel() {
   return h("section", { class: "panel sec-leave" },
     h("div", { class: "panel-head" }, h("h3", { text: "Leave requests waiting for you" }), h("span", { class: "muted", text: plural(list.length, "request") })),
     h("ul", { class: "refs" }, list.map(l => leaveItem(l, true))));
+}
+
+
+/* ---------- personal messages: one private conversation per student ---------- */
+let msgSig = null, markedSeen = {};
+function msgsOf(sid) { return (S.messages || []).filter(m => m.studentId === sid).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)); }
+function msgState(sid) { return (S.msgstate || []).find(x => x.studentId === sid && x.id === "state") || {}; }
+function isMine(m) { return S.isOwner ? m.byRole === "supervisor" : m.byRole !== "supervisor"; }
+/** Messages from the other side that this person hasn't opened yet (all students when sid is empty, for the supervisor). */
+function unreadOf(sid) {
+  const ids = sid ? [sid] : S.students.map(x => x.id);
+  return ids.flatMap(id => { const seen = Number(msgState(id)[S.isOwner ? "supSeen" : "stuSeen"]) || 0; return msgsOf(id).filter(m => !isMine(m) && (m.createdAt || 0) > seen); });
+}
+function msgTime(ts) { return new Date(ts).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
+function msgDay(ts) {
+  const d = localDate(ts), t = todayStr();
+  return d === t ? "Today" : diff(d, t) === 1 ? "Yesterday" : fmtD(d);
+}
+function messagePanel(s) {
+  const text = h("textarea", { id: "msg-text", rows: "2", maxlength: "4000", placeholder: S.isOwner ? "Write to " + s.name + "…" : "Write to your supervisor…", "aria-label": "Message",
+    onkeydown: e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } },
+    oninput: e => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px"; } });
+  const form = h("form", { class: "msg-compose", onsubmit: async e => {
+      e.preventDefault(); const t = text.value.trim();
+      if (!t) { say("Type a message first."); text.focus(); return; }
+      text.value = ""; text.style.height = "";
+      const ok = await write(db => db.collection(C("messages", s.id)).add({ studentId: s.id, text: t, createdAt: Date.now(), createdBy: S.uid, byRole: S.myRole, byName: S.myName }));
+      if (!ok) { text.value = t; return; }
+      stickBottom = true; text.focus();
+    } }, text, h("button", { class: "btn", type: "submit", text: "Send" }));
+  return h("section", { class: "panel sec-msg" },
+    h("div", { class: "panel-head" }, h("h3", { text: S.isOwner ? "Messages with " + s.name : "Messages with your supervisor" }), h("span", { class: "muted", id: "msg-count" })),
+    h("p", { class: "note", text: S.isOwner ? "Private: only you and " + s.name + " can read this conversation." : "Private: only you and your supervisor can read this conversation." }),
+    h("div", { class: "msg-list", id: "msg-list", role: "log", "aria-live": "polite", onscroll: e => { const el = e.target; stickBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60; } }),
+    form, h("p", { class: "note msg-hint", text: "Enter to send · Shift+Enter for a new line. The other person is alerted by the bell when they have the site open." }));
+}
+let stickBottom = true;
+function refreshMessages(s, force) {
+  const list = document.getElementById("msg-list"); if (!list) return;
+  const ms = msgsOf(s.id), st = msgState(s.id), otherSeen = Number(st[S.isOwner ? "stuSeen" : "supSeen"]) || 0;
+  const unread = unreadOf(s.id).length;
+  document.getElementById("tabn-messages").textContent = unread ? unread + " new" : (ms.length || "");
+  document.getElementById("msg-count").textContent = plural(ms.length, "message");
+  const sig = ms.map(m => m.id).join(",") + "|" + otherSeen;
+  if (sig !== msgSig || force) {
+    msgSig = sig;
+    const lastMineSeen = [...ms].reverse().find(m => isMine(m) && (m.createdAt || 0) <= otherSeen);
+    const items = []; let day = "";
+    for (const m of ms) {
+      const dd = msgDay(m.createdAt || Date.now());
+      if (dd !== day) { day = dd; items.push(h("div", { class: "msg-day", text: dd })); }
+      const mine = isMine(m);
+      let del = null;
+      if (mine || S.isOwner) {
+        let armed = null;
+        del = h("button", { class: "msg-del", type: "button", text: "Delete", "aria-label": "Delete this message" });
+        del.onclick = () => { if (!armed) { del.textContent = "Confirm delete"; del.classList.add("armed"); armed = setTimeout(() => { armed = null; del.textContent = "Delete"; del.classList.remove("armed"); }, 4000); return; } clearTimeout(armed); write(db => db.doc(P("messages", m)).delete(), "Message deleted"); };
+      }
+      items.push(h("div", { class: "msg " + (mine ? "msg-mine" : "msg-theirs"), id: "msg-" + m.id },
+        h("div", { class: "bubble", text: m.text }),
+        h("div", { class: "msg-meta" }, h("span", { text: (mine ? "You" : (m.byRole === "supervisor" ? "Supervisor" : m.byName || s.name)) + " · " + msgTime(m.createdAt || Date.now()) }),
+          m === lastMineSeen ? h("span", { class: "msg-seen", text: "✓ Seen" }) : null, del)));
+    }
+    if (!ms.length) items.push(h("p", { class: "note msg-empty", text: S.isOwner ? "No messages yet. Write the first one below. " + s.name + " sees it on their Messages tab and in the bell." : "No messages yet. Write to your supervisor below. They see it in their Messages inbox and in the bell." }));
+    list.replaceChildren(...items);
+    if (stickBottom || force) list.scrollTop = list.scrollHeight;
+  }
+  // opened and visible: mark as read (once per new message)
+  const visible = S.tab === "messages" && !document.hidden && !list.closest("[data-pane]").hidden;
+  const newest = ms.filter(m => !isMine(m)).reduce((a, m) => Math.max(a, m.createdAt || 0), 0);
+  const field = S.isOwner ? "supSeen" : "stuSeen";
+  if (visible && unread && markedSeen[s.id] !== newest) {
+    markedSeen[s.id] = newest;
+    const ref = "students/" + s.id + "/msgstate/state", v = { [field]: Math.max(newest, Date.now()) };
+    setTimeout(() => write(db => (S.msgstate || []).some(x => x.studentId === s.id) ? db.doc(ref).update(v) : db.doc(ref).set(v)), 0);   // only my own field; the other side's stays intact
+  }
+}
+function inboxPage() {
+  return h("section", { class: "panel sec-msg" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Messages" }), h("span", { class: "muted", id: "inbox-count" })),
+    h("p", { class: "note", text: "One private conversation with each student. Open a student to read and reply." }),
+    h("ul", { class: "inbox", id: "inbox" }));
+}
+function refreshInbox() {
+  const rows = scopedStudents().map(s => ({ s, ms: msgsOf(s.id), un: unreadOf(s.id).length }))
+    .sort((a, b) => (b.un ? 1 : 0) - (a.un ? 1 : 0) || ((b.ms.at(-1) || {}).createdAt || 0) - ((a.ms.at(-1) || {}).createdAt || 0) || a.s.name.localeCompare(b.s.name));
+  const total = rows.reduce((n, r) => n + r.un, 0);
+  document.getElementById("inbox-count").textContent = total ? plural(total, "unread message") : "All read";
+  document.getElementById("inbox").replaceChildren(...(rows.length ? rows.map(({ s, ms, un }) => {
+    const last = ms.at(-1);
+    return h("li", null, h("button", { type: "button", class: "inbox-row" + (un ? " unread" : ""), onclick: () => { S.tab = "messages"; select(s.id); } },
+      h("span", { class: "inbox-av", "aria-hidden": "true", text: s.name.split(/\s+/).slice(0, 2).map(w => w[0] || "").join("").toUpperCase() }),
+      h("span", { class: "inbox-main" },
+        h("span", { class: "inbox-top" }, h("b", { text: s.name }), h("span", { class: "muted", text: courseOf(s) }), last ? h("span", { class: "inbox-time", text: msgDay(last.createdAt) === "Today" ? msgTime(last.createdAt) : msgDay(last.createdAt) }) : null),
+        h("span", { class: "inbox-prev", text: last ? (isMine(last) ? "You: " : "") + last.text : "No messages yet. Click to write the first one." })),
+      un ? h("span", { class: "chip msg", text: String(un) }) : null));
+  }) : [h("li", null, h("p", { class: "note", text: "No students yet." }))]));
 }
 
 /* ---------- publications ---------- */
@@ -663,12 +764,13 @@ function buildStudent(s) {
       h("section", { class: "panel sec-meet" }, h("div", { class: "panel-head" }, h("h3", { text: "Scheduled meetings" }), h("span", { class: "muted", id: "stu-sched-count" })),
         h("ul", { class: "refs", id: "stu-sched" })),
       h("div", { class: "cols" }, meetPanel, logPanel)),
-    profile: h("div", { class: "tabpane", "data-pane": "profile" }, profilePanel(s), leavePanel(s)) };
+    profile: h("div", { class: "tabpane", "data-pane": "profile" }, profilePanel(s), leavePanel(s)),
+    messages: h("div", { class: "tabpane", "data-pane": "messages" }, messagePanel(s)) };
   const tabBtn = (k, l) => h("button", { type: "button", role: "tab", "data-tab": k, class: "tab-" + k, "aria-selected": S.tab === k ? "true" : "false",
     onclick: () => { S.tab = k; showTab(); } }, l, h("span", { class: "n", id: "tabn-" + k }));
-  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Read articles"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"), tabBtn("profile", "Profile & leave"));
+  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Read articles"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"), tabBtn("messages", "Messages"), tabBtn("profile", "Profile & leave"));
   if (S.isOwner && S.tab === "confs") S.tab = "tasks";
-  d.replaceChildren(...[head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings, panes.profile].filter(Boolean));
+  d.replaceChildren(...[head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings, panes.messages, panes.profile].filter(Boolean));
   showTab();
   updSig = null; pupdSig = null;
 }
@@ -817,6 +919,7 @@ function refreshUpdRows(s) {
 function showTab() {
   document.querySelectorAll(".tabs [data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === S.tab ? "true" : "false"));
   document.querySelectorAll("[data-pane]").forEach(p => p.hidden = p.dataset.pane !== S.tab);
+  if (S.tab === "messages") { const s = S.students.find(x => x.id === S.sel); if (s && document.getElementById("msg-list")) { msgSig = null; refreshMessages(s, true); setTimeout(() => { const t = document.getElementById("msg-text"); if (t && matchMedia("(min-width: 700px)").matches) t.focus({ preventScroll: true }); }, 0); } }
 }
 let pupdSig = null;
 function refreshPaperRows(s) {
@@ -1222,6 +1325,7 @@ function refreshStudent(s) {
     stat(ms.length, "Meetings"), stat(l ? diff(l, todayStr()) + "d" : "—", "Since last meeting"), stat(nextM ? fmtD(nextM) : "—", "Next meeting"),
     stat(leaveTotal(s.id, thisYear()) + "d", "Leave in " + thisYear()));
   refreshProfile(s);
+  refreshMessages(s);
   document.querySelectorAll("#task-filters button").forEach(b => b.setAttribute("aria-pressed", b.dataset.f === S.filter ? "true" : "false"));
   open.sort(sortTasks); done.sort((a, b) => (doneDateOf(b) || "").localeCompare(doneDateOf(a) || ""));
   const groupHead = (label, n) => h("div", { class: "task-group" }, h("span", { text: label }), h("span", { class: "mono", text: String(n) }));
@@ -1287,6 +1391,10 @@ function renderDetail(force) {
     if (builtFor !== "__sched" || force) { document.getElementById("detail").replaceChildren(schedPage()); builtFor = "__sched"; }
     refreshSched(); return;
   }
+  if (S.sel === "__msgs") {
+    if (builtFor !== "__msgs" || force) { document.getElementById("detail").replaceChildren(inboxPage()); builtFor = "__msgs"; }
+    refreshInbox(); return;
+  }
   if (S.sel === "__confs") {
     if (builtFor !== "__confs" || force) { document.getElementById("detail").replaceChildren(confPanelEl()); builtFor = "__confs"; }
     refreshConfs(); return;
@@ -1306,11 +1414,11 @@ function select(id, taskId) { S.sel = id; builtFor = null; S.filter = "all"; ren
 
 /* ---------- start-up: sign-in check, role, live data ---------- */
 const subs = {};
-function rebuildFlat() { for (const k of ["tasks", "meetings", "papers", "refs", "schedule", "leaves"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []); }
+function rebuildFlat() { for (const k of ["tasks", "meetings", "papers", "refs", "schedule", "leaves", "messages", "msgstate"]) S[k] = Object.values(subs).flatMap(x => x.data[k] || []); }
 function watchStudent(sid) {
   if (subs[sid]) return;
   const entry = subs[sid] = { data: {}, un: [] };
-  for (const k of ["tasks", "meetings", "papers", "refs", "schedule", "leaves"]) entry.un.push(S.db.collection(C(k, sid)).onSnapshot(snap => {
+  for (const k of ["tasks", "meetings", "papers", "refs", "schedule", "leaves", "messages", "msgstate"]) entry.un.push(S.db.collection(C(k, sid)).onSnapshot(snap => {
     entry.data[k] = snap.docs.map(doc => ({ ...doc.data(), id: doc.id, studentId: sid })); rebuildFlat(); renderAll();
   }, err => say("Couldn't load some " + k + ". Reload the page to try again.")));
 }
@@ -1403,6 +1511,7 @@ function bellInit(user) {
   document.addEventListener("keydown", ev => { if (ev.key === "Escape") { const p = document.getElementById("bellPanel"); if (p && !p.hidden) { bellToggle(false); document.getElementById("bellBtn").focus(); } } });
   setInterval(() => { if (!document.getElementById("bellPanel").hidden) bellRender(); }, 60000);   // keep "5 min ago" current
   onActivity(bellIncoming);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && S.tab === "messages") renderAll(); });
   bellRender();
 }
 
