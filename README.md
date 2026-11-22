@@ -77,6 +77,18 @@ When adding or editing a paper there are two co-author fields:
 - Optional **Full author list in order** if the exact order matters; otherwise the names above are used.
 - Only the student who added the paper and the supervisor can change it; co-authors see it read-only. On the overview, each paper is listed once, with "with <co-authors>" under the student's name.
 
+## Attachments in messages (images and PDFs)
+- In any private or group conversation, click 📎, **paste** an image (Ctrl/Cmd+V), or **drag and drop** files onto the conversation. Up to 5 files per message, 5 MB each. Large phone photos are reduced automatically before upload. Only JPG, PNG, GIF, WebP and PDF are accepted.
+- Images show inside the conversation; click one to open it full size. PDFs show as a card; click to open it.
+- Files are stored in a **private folder in your Google Drive** ("WiNDS Lab Research Tracking — message files") and are never shared by link. The script checks that the person can read that conversation before sending a file. Deleting a message moves its files to Drive's Trash.
+- **One-time step after updating Code.gs:** in the Apps Script editor, choose **setupFiles** in the function menu, click **Run** and approve the Google Drive permission. Then deploy a New version.
+
+## Smaller conveniences
+- The site remembers the page, tab and conversation you last had open (per browser).
+- Unsent message text is kept per conversation while you move around the site.
+- With 5 or more students, a search box in the left column finds a student by name or admission number; Enter opens the first match, Esc clears it.
+- On phones, opening a student or page scrolls straight to it.
+
 ## Group messages
 You create groups and choose their members. Students can't create or change groups.
 - **Create:** Messages (left column) → **+ New group** → name it (e.g. "PhD group", "Masters group", "Simulation team") and tick the students. "Select all PhD" / "Select all Masters" buttons tick a whole course at once; a group can mix courses.

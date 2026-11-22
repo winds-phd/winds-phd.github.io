@@ -202,6 +202,9 @@ function dispatch_(action, req) {
       return {};
     }
 
+    case "upload": return uploadFile_(requireUser_(req), req);
+    case "file": return getFile_(requireUser_(req), req);
+
     case "sync": {
       const u = requireUser_(req);
       const rev = currentRev_();
@@ -255,6 +258,8 @@ function dispatch_(action, req) {
         fail_("permission-denied", "Only the person who added this, or the supervisor, can delete it.");
       if (segs[0] === "conferences" && u.role !== "supervisor" && (getDoc_(path) || {}).createdBy !== u.login) fail_("permission-denied", "You can only remove conference entries you added.");
       const prevRev = currentRev_(), old = getDoc_(path);
+      if (segs[2] === "messages" && segs.length === 4) safely_(() => trashFiles_(old));
+      if (u.role === "supervisor" && segs.length === 2 && (segs[0] === "groups" || segs[0] === "students")) safely_(() => loadDocs_().list.filter(d => d.path.indexOf(path + "/messages/") === 0).forEach(d => trashFiles_(d.data)));
       deleteDoc_(path);
       safely_(() => logChange_(u, "delete", segs, old, null));
       if (u.role === "supervisor" && segs.length === 2 && segs[0] === "groups") deletePrefix_(path + "/");
@@ -273,10 +278,10 @@ function dispatch_(action, req) {
       if (segs[0] === "conferences") data.createdBy = u.login;
       if (segs[0] === "students" && segs[2] === "leaves" && segs.length === 3) data = checkLeave_(u, null, data);
       if (segs[0] === "students" && segs[2] === "messages" && segs.length === 3) {
-        const text = String(data.text || "").trim();
-        if (!text) fail_("invalid-argument", "The message is empty.");
+        const text = String(data.text || "").trim(), files = cleanFiles_(data.files, segs.join("/"));
+        if (!text && !files.length) fail_("invalid-argument", "The message is empty.");
         if (text.length > 4000) fail_("invalid-argument", "Keep a message under 4000 characters.");
-        data = { text: text, createdAt: Date.now(), createdBy: u.login, byRole: u.role, byName: u.role === "supervisor" ? "Supervisor" : (u.name || "Student") };
+        data = { text: text, files: files, createdAt: Date.now(), createdBy: u.login, byRole: u.role, byName: u.role === "supervisor" ? "Supervisor" : (u.name || "Student") };
       }
       if (segs[0] === "students" && segs[2] === "msgstate") fail_("invalid-argument", "Use set for read status.");
       if (segs[0] === "groups") data = checkGroupAdd_(u, segs, data);
@@ -650,7 +655,7 @@ function logChange_(u, op, segs, before, after) {
       if (before.name !== after.name) return logActivity_(Object.assign(base, { text: "Group " + q(before.name) + " renamed to " + gname }));
       return;
     }
-    if (segs[2] === "messages" && op === "add") return logActivity_(Object.assign(base, { text: who + " in " + gname + ": " + (ex.text.length > 140 ? ex.text.slice(0, 140) + "…" : ex.text) }));
+    if (segs[2] === "messages" && op === "add") return logActivity_(Object.assign(base, { text: who + " in " + gname + ": " + msgPreview_(ex) }));
     return;
   }
   if (segs[0] === "supervisor" && segs[2] === "papers" && segs.length === 4) {   // the supervisor's own paper: tell its lab co-authors
@@ -703,7 +708,7 @@ function logChange_(u, op, segs, before, after) {
   if (kind === "refs" && op === "add") return logActivity_(Object.assign(base, { tab: "refs", text: who + " added an article " + t + (ex.venue ? " (" + ex.venue + ")" : "") }));
   if (kind === "messages") {
     if (op !== "add") return;
-    const pv = ex.text.length > 140 ? ex.text.slice(0, 140) + "…" : ex.text;
+    const pv = msgPreview_(ex);
     return logActivity_(Object.assign(base, { tab: "messages", text: (u.role === "supervisor" ? "Message from your supervisor: " : who + " sent you a message: ") + pv }));
   }
   if (kind === "leaves") {
@@ -813,10 +818,10 @@ function checkGroupWrite_(u, segs, d) {
 function checkGroupAdd_(u, segs, d) {
   if (segs.length === 1) { if (u.role !== "supervisor") fail_("permission-denied", "Only the supervisor can create groups."); return cleanGroup_(d); }
   if (segs[2] === "messages" && segs.length === 3) {
-    const text = String(d.text || "").trim();
-    if (!text) fail_("invalid-argument", "The message is empty.");
+    const text = String(d.text || "").trim(), files = cleanFiles_(d.files, segs.join("/"));
+    if (!text && !files.length) fail_("invalid-argument", "The message is empty.");
     if (text.length > 4000) fail_("invalid-argument", "Keep a message under 4000 characters.");
-    return { text: text, createdAt: Date.now(), createdBy: u.login, byRole: u.role, byName: u.role === "supervisor" ? "Supervisor" : (u.name || "Student") };
+    return { text: text, files: files, createdAt: Date.now(), createdBy: u.login, byRole: u.role, byName: u.role === "supervisor" ? "Supervisor" : (u.name || "Student") };
   }
   fail_("invalid-argument", "Unknown group record.");
 }
@@ -834,4 +839,60 @@ function labDirectory_() {
   const sup = users_().filter(x => x.role === "supervisor")[0];
   return (sup ? [{ key: "__sup", name: sup.name || "Supervisor", course: "Supervisor" }] : []).concat(loadDocs_().list.filter(d => /^students\/[^/]+$/.test(d.path))
     .map(d => ({ key: d.path.slice(9), name: (d.data || {}).name || "", course: (d.data || {}).course || (d.data || {}).stage || "PhD" })));
+}
+
+
+/* ================================================================ message attachments (images and PDFs)
+ *  Files go into a private folder in the supervisor's Drive: "WiNDS Lab Research Tracking — message files".
+ *  They are never shared by link. The site asks this script for a file, and the script first checks that the
+ *  person can read the conversation it belongs to (recorded in the file's description).
+ *  After adding this code, run  setupFiles  once in the editor and approve the Google Drive permission.
+ */
+const FILE_MAX_BYTES = 5 * 1024 * 1024;
+const FILE_TYPES = { "image/jpeg": 1, "image/png": 1, "image/gif": 1, "image/webp": 1, "application/pdf": 1 };
+function setupFiles() { Logger.log("Message attachments are saved in: " + filesFolder_().getUrl()); }
+function filesFolder_() {
+  const props = PropertiesService.getScriptProperties(), id = props.getProperty("FILES_FOLDER_ID");
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* folder deleted: make a new one */ } }
+  const f = DriveApp.createFolder("WiNDS Lab Research Tracking — message files");
+  props.setProperty("FILES_FOLDER_ID", f.getId());
+  return f;
+}
+function uploadFile_(u, req) {
+  const segs = colPath_(req.scope);
+  if (!(segs.length === 3 && segs[2] === "messages" && (segs[0] === "students" || segs[0] === "groups")) || !canSee_(u, segs)) fail_("permission-denied", "You can't attach files to this conversation.");
+  const mime = String(req.mime || "");
+  if (!FILE_TYPES[mime]) fail_("invalid-argument", "Only images (JPG, PNG, GIF, WebP) and PDF files can be attached.");
+  let bytes; try { bytes = Utilities.base64Decode(String(req.data || "")); } catch (e) { fail_("invalid-argument", "The file couldn't be read. Try attaching it again."); }
+  if (!bytes.length) fail_("invalid-argument", "The file is empty.");
+  if (bytes.length > FILE_MAX_BYTES) fail_("invalid-argument", "Files can be up to 5 MB. Compress the PDF or split it, then try again.");
+  const name = String(req.name || "file").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 120) || "file";
+  let file;
+  try { file = filesFolder_().createFile(Utilities.newBlob(bytes, mime, name)); }
+  catch (e) { fail_("not-set-up", "Attachments aren't switched on yet. The supervisor needs to run setupFiles once in the Apps Script editor."); }
+  file.setDescription(segs.join("/") + "|" + u.login);
+  return { file: { id: file.getId(), name: name, mime: mime, size: bytes.length } };
+}
+function fileScope_(file) { return String(file.getDescription() || "").split("|")[0]; }
+function getFile_(u, req) {
+  let file; try { file = DriveApp.getFileById(String(req.fileId || "")); } catch (e) { fail_("not-found", "This file is no longer available."); }
+  if (file.isTrashed()) fail_("not-found", "This file was deleted.");
+  const scope = fileScope_(file);
+  if (!scope || !canSee_(u, scope.split("/"))) fail_("permission-denied", "You don't have access to this file.");
+  return { name: file.getName(), mime: file.getMimeType(), data: Utilities.base64Encode(file.getBlob().getBytes()) };
+}
+/** Checks the files listed on a new message really were uploaded to this same conversation. */
+function cleanFiles_(list, scopePath) {
+  return (Array.isArray(list) ? list : []).slice(0, 5).map(f => {
+    let file; try { file = DriveApp.getFileById(String(f && f.id || "")); } catch (e) { fail_("invalid-argument", "An attached file couldn't be found. Attach it again."); }
+    if (fileScope_(file) !== scopePath) fail_("permission-denied", "That file belongs to another conversation.");
+    return { id: file.getId(), name: file.getName(), mime: file.getMimeType(), size: file.getSize() };
+  });
+}
+function trashFiles_(msg) { ((msg && msg.files) || []).forEach(f => { try { DriveApp.getFileById(f.id).setTrashed(true); } catch (e) { /* already gone */ } }); }
+function msgPreview_(m) {
+  const t = String(m.text || ""), files = m.files || [];
+  const att = files.length ? "📎 " + (files.length === 1 ? files[0].name : files.length + " files") : "";
+  const s = t ? (t.length > 140 ? t.slice(0, 140) + "…" : t) + (att ? " (" + att + ")" : "") : att;
+  return s || "(empty message)";
 }

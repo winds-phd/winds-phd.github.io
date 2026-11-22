@@ -1,6 +1,6 @@
 // Talks to the Google Apps Script backend (data lives in a Google Sheet in the supervisor's Drive).
 // Provides sign-in helpers and a small live data layer used by every page.
-import { API_URL } from "./config.js?v=20261122-1355";
+import { API_URL } from "./config.js?v=20261122-1500";
 
 export const configured = !String(API_URL).startsWith("PASTE_") && /^https:\/\//.test(API_URL);
 const TOKEN_KEY = "phdlog.token";
@@ -50,6 +50,28 @@ const activityFns = new Set();
 let lab = [];
 /** Everyone registered in the lab: [{ key, name, course }] (names only, for picking co-authors). */
 export function labMembers() { return lab; }
+
+/* ---------- message attachments ---------- */
+function toBase64(file) {
+  return new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = () => bad(new Error("The file couldn't be read.")); r.readAsDataURL(file); });
+}
+/** Uploads an image or PDF to a conversation ("students/<key>/messages" or "groups/<id>/messages"). Returns { id, name, mime, size }. */
+export async function uploadFile(scope, file) {
+  const j = await call("upload", { scope, name: file.name, mime: file.type, data: await toBase64(file) });
+  return j.file;
+}
+const fileUrls = new Map();
+/** A private in-browser link (blob:) to an attachment; fetched once per page load. */
+export function fileUrl(id) {
+  if (fileUrls.has(id)) return fileUrls.get(id);
+  const p = call("file", { fileId: id }).then(j => {
+    const bin = atob(j.data), arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([arr], { type: j.mime }));
+  });
+  fileUrls.set(id, p); p.catch(() => fileUrls.delete(id));
+  return p;
+}
 /** Called after each fresh sync with the latest changes made by other people (newest first). */
 export function onActivity(fn) { activityFns.add(fn); return () => activityFns.delete(fn); }
 const POLL_MS = 10000;

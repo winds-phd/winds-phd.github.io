@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261122-1355";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl } from "./core.js?v=20261122-1500";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -164,7 +164,12 @@ function renderRoster() {
       h("span", { class: "nm" }, "Messages", allUnread() ? h("span", { class: "chip msg", style: "margin-left:8px", text: String(allUnread()) }) : null),
       h("span", { class: "meta", text: (() => { const n = S.students.filter(x => unreadOf(x.id).length).length + groupsMine().filter(g => gUnread(g.id)).length; return n ? "Unread in " + plural(n, "conversation") : groupsMine().length ? plural(groupsMine().length, "group") + " · private conversations" : "Groups and private conversations"; })() })),
     h("div", { class: "roster-sep label", text: "Students" })];
-  for (const [course, list] of byCourse(S.students)) {
+  const q = (S.rosterQ || "").trim().toLowerCase();
+  const found = S.students.filter(s => !q || (s.name || "").toLowerCase().includes(q) || (s.admissionNo || s.id).toLowerCase().includes(q));
+  const search = document.getElementById("rosterSearch");
+  if (search) { search.hidden = S.students.length < 5; if (search.hidden && q) S.rosterQ = ""; }
+  if (q && !found.length) items.push(h("p", { class: "note", style: "padding:4px 12px", text: "No student matches “" + S.rosterQ.trim() + "”." }));
+  for (const [course, list] of byCourse(found)) {
   items.push(h("div", { class: "course-head" }, h("span", { text: course }), h("span", { class: "mono", text: String(list.length) })));
   for (const s of list) {
     const l = lastMeeting(s.id), mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), od = open.filter(isOverdue).length;
@@ -451,24 +456,102 @@ function groupThread(g) {
     markSeen: ts => write(db => db.doc("groups/" + g.id + "/seen/" + myKey()).set({ ts })) };
 }
 
+/* Files waiting to be sent with the next message, and unsent text per conversation. */
+let pendingFiles = [], drafts = {}, sendingMsg = false;
+const ATTACH_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+function fmtSize(n) { return n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
+/** Big phone photos are scaled down to at most 1920 px and saved as JPEG before upload (usually well under 1 MB). */
+async function shrinkImage(file) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 900 * 1024) return file;
+  try {
+    const url = URL.createObjectURL(file), img = new Image();
+    await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url; });
+    const k = Math.min(1, 1920 / Math.max(img.width, img.height)), c = document.createElement("canvas");
+    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    const blob = await new Promise(ok => c.toBlob(ok, "image/jpeg", 0.85));
+    return blob && blob.size < file.size ? new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" }) : file;
+  } catch (e) { return file; }
+}
+async function addFiles(list) {
+  for (const f of list) {
+    if (pendingFiles.length >= 5) { say("Up to 5 files per message."); break; }
+    if (!ATTACH_TYPES.includes(f.type)) { say("“" + f.name + "” can't be attached. Use an image (JPG, PNG, GIF, WebP) or a PDF."); continue; }
+    const small = await shrinkImage(f);
+    if (small.size > 5 * 1024 * 1024) { say("“" + f.name + "” is " + fmtSize(small.size) + ". Files can be up to 5 MB."); continue; }
+    pendingFiles.push({ file: small, url: small.type.startsWith("image/") ? URL.createObjectURL(small) : "" });
+  }
+  drawPending();
+}
+function drawPending() {
+  const box = document.getElementById("msg-pending"); if (!box) return;
+  box.hidden = !pendingFiles.length;
+  box.replaceChildren(...pendingFiles.map((p, i) => h("span", { class: "pend" },
+    p.url ? h("img", { src: p.url, alt: "" }) : h("span", { class: "pend-ico", "aria-hidden": "true", text: "PDF" }),
+    h("span", { class: "pend-name", text: p.file.name }), h("span", { class: "muted", text: fmtSize(p.file.size) }),
+    h("button", { type: "button", "aria-label": "Remove " + p.file.name, text: "×", disabled: sendingMsg, onclick: () => { if (p.url) URL.revokeObjectURL(p.url); pendingFiles.splice(i, 1); drawPending(); } }))));
+}
+/** Attachments inside a message bubble: image thumbnails and PDF cards, fetched privately through the script. */
+function attachmentsEl(m) {
+  if (!(m.files || []).length) return null;
+  return h("div", { class: "msg-files" }, m.files.map(f => {
+    const isImg = (f.mime || "").startsWith("image/");
+    const a = h("a", { class: isImg ? "att-img loading" : "att-file loading", target: "_blank", rel: "noopener", title: "Open " + f.name, "aria-label": "Open " + f.name },
+      isImg ? h("span", { class: "att-wait", text: "Loading image…" }) : h("span", { class: "att-ico", "aria-hidden": "true", text: "PDF" }),
+      isImg ? null : h("span", { class: "att-meta" }, h("span", { class: "att-name", text: f.name }), h("span", { class: "muted", text: fmtSize(f.size || 0) + " · loading…" })));
+    a.addEventListener("click", ev => { if (!a.href) { ev.preventDefault(); say("Still loading. Try again in a moment."); } });
+    fileUrl(f.id).then(url => {
+      a.href = url; a.classList.remove("loading");
+      if (isImg) a.replaceChildren(h("img", { src: url, alt: f.name }));
+      else a.querySelector(".att-meta .muted").textContent = fmtSize(f.size || 0) + " · click to open";
+    }).catch(err => { a.classList.remove("loading"); a.classList.add("att-err"); a.replaceChildren(h("span", { text: (f.name || "File") + ": " + (err.message || "couldn't load") })); });
+    return a;
+  }));
+}
+function msgPreview(m) {
+  const files = m.files || [], att = files.length ? "📎 " + (files.length === 1 ? files[0].name : files.length + " files") : "";
+  return m.text ? m.text + (att ? "  " + att : "") : att;
+}
 function chatPanel(withBar) {
   const text = h("textarea", { id: "msg-text", rows: "2", maxlength: "4000", "aria-label": "Message",
     onkeydown: e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } },
-    oninput: e => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px"; } });
+    onpaste: e => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } },
+    oninput: e => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px"; if (chatT) drafts[chatT.id] = e.target.value; } });
+  const picker = h("input", { type: "file", accept: ATTACH_TYPES.join(","), multiple: true, hidden: true, onchange: e => { addFiles([...e.target.files]); e.target.value = ""; } });
+  const sendBtn = h("button", { class: "btn", type: "submit", text: "Send" });
   const form = h("form", { class: "msg-compose", onsubmit: async e => {
-      e.preventDefault(); const t = text.value.trim(), T = chatT; if (!T) return;
-      if (!t) { say("Type a message first."); text.focus(); return; }
-      text.value = ""; text.style.height = "";
-      const ok = await write(db => db.collection(T.coll).add({ ...T.extra, text: t, createdAt: Date.now(), createdBy: S.uid, byRole: S.myRole, byName: S.myName }));
-      if (!ok) { text.value = t; return; }
+      e.preventDefault(); const t = text.value.trim(), T = chatT; if (!T || sendingMsg) return;
+      if (!t && !pendingFiles.length) { say("Type a message or attach a file first."); text.focus(); return; }
+      sendingMsg = true; sendBtn.disabled = true; drawPending();
+      const files = [];
+      try {
+        for (let i = 0; i < pendingFiles.length; i++) {
+          sendBtn.textContent = pendingFiles.length > 1 ? "Uploading " + (i + 1) + "/" + pendingFiles.length + "…" : "Uploading…";
+          files.push(await uploadFile(T.coll, pendingFiles[i].file));
+        }
+      } catch (err) { say(err.message || "The file couldn't be uploaded."); sendingMsg = false; sendBtn.disabled = false; sendBtn.textContent = "Send"; drawPending(); return; }
+      sendBtn.textContent = "Sending…";
+      text.value = ""; text.style.height = ""; delete drafts[T.id];
+      const ok = await write(db => db.collection(T.coll).add({ ...T.extra, text: t, files, createdAt: Date.now(), createdBy: S.uid, byRole: S.myRole, byName: S.myName }));
+      sendingMsg = false; sendBtn.disabled = false; sendBtn.textContent = "Send";
+      if (!ok) { text.value = t; drawPending(); return; }
+      pendingFiles.forEach(p => p.url && URL.revokeObjectURL(p.url)); pendingFiles = []; drawPending();
       stickBottom = true; text.focus();
-    } }, text, h("button", { class: "btn", type: "submit", text: "Send" }));
-  return h("section", { class: "panel sec-msg" },
+    } },
+    h("button", { class: "btn ghost attach", type: "button", title: "Attach an image or PDF", "aria-label": "Attach an image or PDF", onclick: () => picker.click() },
+      h("span", { "aria-hidden": "true", text: "📎" })), picker, text, sendBtn);
+  const panel = h("section", { class: "panel sec-msg", ondragover: e => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); panel.classList.add("drop"); } },
+      ondragleave: e => { if (!panel.contains(e.relatedTarget)) panel.classList.remove("drop"); },
+      ondrop: e => { e.preventDefault(); panel.classList.remove("drop"); addFiles([...e.dataTransfer.files]); } },
     withBar ? h("div", { class: "thread-bar", id: "thread-bar", role: "tablist", "aria-label": "Conversations" }) : null,
     h("div", { class: "panel-head" }, h("h3", { id: "chat-title" }), h("span", { class: "muted", id: "msg-count" })),
     h("p", { class: "note", id: "chat-note" }),
     h("div", { class: "msg-list", id: "msg-list", role: "log", "aria-live": "polite", onscroll: e => { const el = e.target; stickBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60; } }),
-    form, h("p", { class: "note msg-hint", text: "Enter to send · Shift+Enter for a new line. Others are alerted by the bell when they have the site open. No emails are sent." }));
+    h("div", { class: "msg-pending", id: "msg-pending", hidden: true }),
+    form, h("p", { class: "note msg-hint", text: "Enter to send · Shift+Enter for a new line · 📎 or paste or drop images and PDFs (up to 5 MB each). Only the people in this conversation can open them." }));
+  setTimeout(drawPending, 0);
+  return panel;
 }
 /** Draws the current thread; marks it read when it's on screen. */
 function refreshChat(force) {
@@ -481,6 +564,10 @@ function refreshChat(force) {
   const sig = T.id + "|" + ms.map(m => m.id).join(",") + "|" + otherSeen;
   if (sig !== msgSig || force) {
     const switched = !msgSig || msgSig.split("|")[0] !== T.id;
+    if (switched && document.getElementById("msg-text").dataset.thread !== T.id) {   // another conversation: bring back its unsent text
+      const ta = document.getElementById("msg-text"); ta.value = drafts[T.id] || ""; ta.dataset.thread = T.id; ta.style.height = "";
+      if (pendingFiles.length && !sendingMsg) { pendingFiles.forEach(p => p.url && URL.revokeObjectURL(p.url)); pendingFiles = []; drawPending(); }
+    }
     msgSig = sig;
     const lastMineSeen = T.group ? null : [...ms].reverse().find(m => isMine(m) && (m.createdAt || 0) <= otherSeen);
     const items = []; let day = "", prev = null;
@@ -497,7 +584,8 @@ function refreshChat(force) {
       const showName = T.group && !mine && (!prev || prev.createdBy !== m.createdBy);
       items.push(h("div", { class: "msg " + (mine ? "msg-mine" : "msg-theirs"), id: "msg-" + m.id },
         showName ? h("div", { class: "msg-from" + (m.byRole === "supervisor" ? " sup" : ""), text: T.sender(m) }) : null,
-        h("div", { class: "bubble", text: m.text }),
+        m.text ? h("div", { class: "bubble", text: m.text }) : null,
+        attachmentsEl(m),
         h("div", { class: "msg-meta" }, h("span", { text: mine ? "You · " + msgTime(m.createdAt || Date.now()) : T.group ? msgTime(m.createdAt || Date.now()) : T.sender(m) + " · " + msgTime(m.createdAt || Date.now()) }),
           m === lastMineSeen ? h("span", { class: "msg-seen", text: "✓ Seen" }) : null, del)));
       prev = m;
@@ -522,7 +610,7 @@ function refreshMessages(s, force) {
   chatT = S.thread === "dm" ? dmThread(s) : groupThread(groups.find(g => g.id === S.thread));
   tabN.textContent = allUnread() || "";                      // unread only, never the total
   const chip = (id, label, n, sub) => h("button", { type: "button", role: "tab", class: "thread-chip", "aria-selected": S.thread === id ? "true" : "false",
-    onclick: () => { if (S.thread === id) return; S.thread = id; msgSig = null; stickBottom = true; refreshMessages(s, true); const t = document.getElementById("msg-text"); if (t && matchMedia("(min-width: 700px)").matches) t.focus({ preventScroll: true }); } },
+    onclick: () => { if (S.thread === id) return; S.thread = id; saveNav(); msgSig = null; stickBottom = true; refreshMessages(s, true); const t = document.getElementById("msg-text"); if (t && matchMedia("(min-width: 700px)").matches) t.focus({ preventScroll: true }); } },
     h("span", { class: "tc-name", text: label }), sub ? h("span", { class: "tc-sub", text: sub }) : null, n ? h("span", { class: "chip msg", text: String(n) }) : null);
   document.getElementById("thread-bar").replaceChildren(chip("dm", "Supervisor", unreadOf(s.id).length, "Private"),
     ...groups.map(g => chip(g.id, g.name, gUnread(g.id), "Group · " + (g.members || []).length)));
@@ -550,7 +638,7 @@ function refreshInbox() {
       h("span", { class: "inbox-av grp", "aria-hidden": "true", text: initials(g.name) }),
       h("span", { class: "inbox-main" },
         h("span", { class: "inbox-top" }, h("b", { text: g.name }), h("span", { class: "muted", text: plural((g.members || []).length, "member") }), last ? h("span", { class: "inbox-time", text: whenShort(last.createdAt) }) : null),
-        h("span", { class: "inbox-prev", text: last ? (isMine(last) ? "You: " : (last.byName || "Student") + ": ") + last.text : memberNames(g).join(", ") || "No members yet" })),
+        h("span", { class: "inbox-prev", text: last ? (isMine(last) ? "You: " : (last.byName || "Student") + ": ") + msgPreview(last) : memberNames(g).join(", ") || "No members yet" })),
       un ? h("span", { class: "chip msg", text: String(un) }) : null));
   }) : [h("li", null, h("p", { class: "note", text: "No groups yet. Use “+ New group” to create one, for example “PhD group” or “Masters group”, and choose its students. The group appears for those students straight away." }))]));
   const rows = scopedStudents().map(s => ({ s, ms: msgsOf(s.id), un: unreadOf(s.id).length }))
@@ -564,7 +652,7 @@ function refreshInbox() {
       h("span", { class: "inbox-av", "aria-hidden": "true", text: initials(s.name) }),
       h("span", { class: "inbox-main" },
         h("span", { class: "inbox-top" }, h("b", { text: s.name }), h("span", { class: "muted", text: courseOf(s) }), last ? h("span", { class: "inbox-time", text: whenShort(last.createdAt) }) : null),
-        h("span", { class: "inbox-prev", text: last ? (isMine(last) ? "You: " : "") + last.text : "No messages yet. Click to write the first one." })),
+        h("span", { class: "inbox-prev", text: last ? (isMine(last) ? "You: " : "") + msgPreview(last) : "No messages yet. Click to write the first one." })),
       un ? h("span", { class: "chip msg", text: String(un) }) : null));
   }) : [h("li", null, h("p", { class: "note", text: "No students yet." }))]));
   if (!typing) refreshGroupPicker(null);
@@ -1096,6 +1184,7 @@ function refreshUpdRows(s) {
 function showTab() {
   document.querySelectorAll(".tabs [data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === S.tab ? "true" : "false"));
   document.querySelectorAll("[data-pane]").forEach(p => p.hidden = p.dataset.pane !== S.tab);
+  saveNav();
   if (S.tab === "messages") { const s = S.students.find(x => x.id === S.sel); if (s && document.getElementById("msg-list")) { msgSig = null; stickBottom = true; refreshMessages(s, true); setTimeout(() => { const t = document.getElementById("msg-text"); if (t && matchMedia("(min-width: 700px)").matches) t.focus({ preventScroll: true }); }, 0); } }
 }
 let pupdSig = null;
@@ -1584,6 +1673,7 @@ function showSupTab() {
   if (!SUP_TABS.some(([k]) => k === S.supTab)) S.supTab = "tasks";
   document.querySelectorAll("[data-stab]").forEach(b => b.setAttribute("aria-selected", b.dataset.stab === S.supTab ? "true" : "false"));
   document.querySelectorAll("[data-spane]").forEach(p => p.hidden = p.dataset.spane !== S.supTab);
+  saveNav();
 }
 function refreshSup() {
   refreshMine(); refreshSched();
@@ -1678,7 +1768,23 @@ function renderAll(force) {
   if (ae && document.activeElement && document.activeElement.id !== ae) { const el = document.getElementById(ae); if (el) el.focus({ preventScroll: true }); }
   if (Math.abs(window.scrollY - y) > 2) window.scrollTo({ top: y });
 }
-function select(id, taskId) { S.sel = id; builtFor = null; S.filter = "all"; renderAll(); window.scrollTo({ top: 0 }); if (taskId) focusTask(taskId); }
+function select(id, taskId) {
+  S.sel = id; builtFor = null; S.filter = "all"; renderAll(); saveNav();
+  // on phones the left column sits above the page, so jump to what was opened
+  if (id !== null && matchMedia("(max-width: 860px)").matches) { const d = document.getElementById("detail"); if (d) d.scrollIntoView({ block: "start" }); }
+  else window.scrollTo({ top: 0 });
+  if (taskId) focusTask(taskId);
+}
+/* Remember the last page, tab and conversation on this browser, so a reload or the next sign-in opens the same place. */
+function navKey() { return "winds.nav." + (S.uid || ""); }
+function saveNav() { try { localStorage.setItem(navKey(), JSON.stringify({ sel: S.sel, tab: S.tab, supTab: S.supTab, thread: S.thread })); } catch (e) { /* private window: fine */ } }
+function restoreNav() {
+  try {
+    const n = JSON.parse(localStorage.getItem(navKey()) || "null"); if (!n) return;
+    if (S.isOwner && n.sel !== undefined) S.sel = n.sel;
+    if (n.tab) S.tab = n.tab; if (n.supTab) S.supTab = n.supTab; if (n.thread) S.thread = n.thread;
+  } catch (e) { /* nothing saved */ }
+}
 
 /* ---------- start-up: sign-in check, role, live data ---------- */
 const subs = {};
@@ -1807,6 +1913,7 @@ export async function start(pageRole) {
   if (pageRole === "supervisor" && !sup) { location.href = "student.html"; return; }
   if (pageRole === "student" && sup) { location.href = "dashboard.html"; return; }
   S.db = db; S.uid = user.uid; S.isOwner = sup;
+  restoreNav();
   if (document.getElementById("bellBtn")) bellInit(user);
   try { const c = localStorage.getItem("winds.course"); if (c && (c === "all" || COURSES.includes(c))) S.course = c; } catch (e) { /* default: all */ }
   S.myName = sup ? "Supervisor" : (user.displayName || "Student"); S.myRole = sup ? "supervisor" : "student";
@@ -1827,6 +1934,14 @@ export async function start(pageRole) {
     if (list && !typing) refreshConfs();
     if (S.isOwner) renderRoster();
   }, () => {});
+  const rs = document.getElementById("rosterSearch");
+  if (rs) {
+    rs.addEventListener("input", () => { S.rosterQ = rs.value; renderRoster(); });
+    rs.addEventListener("keydown", e => {
+      if (e.key === "Escape") { rs.value = ""; S.rosterQ = ""; renderRoster(); }
+      if (e.key === "Enter") { const q = rs.value.trim().toLowerCase(); const s = S.students.find(x => (x.name || "").toLowerCase().includes(q) || (x.admissionNo || x.id).toLowerCase().includes(q)); if (q && s) select(s.id); }
+    });
+  }
   if (sup) {
     db.doc("private/join").onSnapshot(snap => { document.getElementById("joinShow").textContent = snap.exists && snap.data().code ? snap.data().code : "Not set"; },
       () => { document.getElementById("joinShow").textContent = "Can't read"; });
