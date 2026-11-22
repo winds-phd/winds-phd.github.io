@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl, calendarFeed, act } from "./core.js?v=20261122-1800";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl, calendarFeed, act } from "./core.js?v=20261122-1810";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -824,6 +824,8 @@ function calendarPanel() {
 /* ---------- internal paper review ---------- */
 const VERDICTS = ["Ready to submit", "Minor changes", "Major changes"];
 function reviewsFor(p) { const path = P("papers", p); return (S.reviews || []).filter(r => r.paperPath === path); }
+/** Lab authors of a reviewed paper: the student who added it plus its lab co-authors. */
+function reviewAuthors(r) { const p = paperByPath(r.paperPath); return [r.owner, ...((p && p.coauthors) || [])].filter((k, i, a) => k && a.indexOf(k) === i); }
 function paperByPath(path) { return [...S.papers, ...(S.supPapers || [])].find(p => P("papers", p) === path) || null; }
 function verdictChip(v) { return h("span", { class: "chip " + (v === "Ready to submit" ? "good" : v === "Major changes" ? "bad" : "warn"), text: v }); }
 function dueText(r) {
@@ -844,7 +846,7 @@ function paperReviewBox(p) {
     h("span", { class: "muted", text: " · " + dueText(r) + " · " + plural((r.comments || []).length, "comment") }), r.verdict && r.status === "Done" ? verdictChip(r.verdict) : null));
   let form = null;
   if (S.isOwner) {
-    const taken = new Set(list.map(r => r.reviewer)), sel = h("select", { "aria-label": "Reviewer" },
+    const taken = new Set([...list.map(r => r.reviewer), ...(p.coauthors || [])]), sel = h("select", { "aria-label": "Reviewer" },
       h("option", { value: "", text: "Choose a reviewer…" }),
       ...byCourse(S.students.filter(x => x.id !== owner && !taken.has(x.id))).map(([c, l]) => h("optgroup", { label: c }, l.map(x => h("option", { value: x.id, text: x.name })))));
     const due = h("input", { type: "date", "aria-label": "Review due date", min: todayStr() }), note = h("input", { maxlength: "1000", placeholder: "What to focus on (optional), e.g. related work and figures" });
@@ -860,7 +862,7 @@ function paperReviewBox(p) {
         h("div", { class: "row" }, h("label", { class: "fieldlabel" }, "Reviewer", sel), h("label", { class: "fieldlabel" }, "Due by (optional)", due)),
         h("label", { class: "fieldlabel" }, "Note for the reviewer", note),
         h("div", null, h("button", { class: "btn small", type: "submit", text: "Assign reviewer" })),
-        h("p", { class: "note", text: "The reviewer can read this paper (and its Overleaf link) and write comments that only they, the author and you can see. Assign as many reviewers as you like; each gets a separate review." })));
+        h("p", { class: "note", text: "The reviewer can read this paper (and its Overleaf link) and write comments that only they, the paper's lab authors and you can see. Authors can't review their own paper. Assign as many reviewers as you like; each gets a separate review." })));
   }
   return h("div", { class: "review-box" }, h("span", { class: "label", text: "Internal review" + (list.length ? " · " + list.filter(r => r.status === "Done").length + " of " + list.length + " done" : "") }),
     rows.length ? h("ul", { class: "review-rows" }, ...rows) : h("p", { class: "note", text: "No reviewers yet." }), form);
@@ -868,12 +870,12 @@ function paperReviewBox(p) {
 function reviewsPanel() {
   return h("section", { class: "panel sec-review" },
     h("div", { class: "panel-head" }, h("h3", { text: "Internal reviews" }), h("span", { class: "muted", id: "rv-count" })),
-    h("p", { class: "note", text: S.isOwner ? "Reviews you've assigned. Assign reviewers from a paper's card (Internal review). Each review is visible only to its reviewer, the paper's author and you." : "Papers you've been asked to review, and reviews of your own papers. Only the reviewer, the author and the supervisor see a review." }),
+    h("p", { class: "note", text: S.isOwner ? "Reviews you've assigned. Assign reviewers from a paper's card (Internal review). Each review is visible only to its reviewer, the paper's lab authors (who added it and its co-authors) and you." : "Papers you've been asked to review, and reviews of papers you're an author on. Only the reviewer, the paper's lab authors and the supervisor see a review." }),
     h("div", { id: "rv-list" }));
 }
 function reviewCard(r) {
-  const p = paperByPath(r.paperPath), mine = !S.isOwner && r.reviewer === myKey(), author = !S.isOwner && r.owner === myKey();
-  const role = mine ? "You're reviewing" : author ? "Review of your paper" : "Review";
+  const p = paperByPath(r.paperPath), mine = !S.isOwner && r.reviewer === myKey(), author = !S.isOwner && reviewAuthors(r).includes(myKey());
+  const role = mine ? "You're reviewing" : author ? (r.owner === myKey() ? "Review of your paper" : "Review of your co-authored paper") : "Review";
   const thread = h("div", { class: "rv-thread" }, ...((r.comments || []).length ? r.comments.map(c => h("div", { class: "rv-c" + (c.by === S.uid ? " me" : "") },
       h("div", { class: "rv-c-head" }, h("b", { text: c.by === S.uid ? "You" : c.byRole === "supervisor" ? "Supervisor" : c.byName }), h("span", { class: "muted", text: (c.byRole !== "supervisor" && c.by === "student:" + r.reviewer ? "reviewer · " : "") + fmtD(localDate(c.at)) + " " + msgTime(c.at) })),
       h("div", { class: "rv-c-text", text: c.text })))
@@ -929,7 +931,7 @@ function refreshReviews() {
     ...(list.length ? list.map(reviewCard) : [h("p", { class: "note", text: empty })])];
   if (S.isOwner) box.replaceChildren(...sec("Open", all.filter(r => r.status !== "Done"), "No open reviews. Assign one from any paper's card."), ...(all.some(r => r.status === "Done") ? sec("Done", all.filter(r => r.status === "Done"), "") : []));
   else box.replaceChildren(...sec("Papers you're reviewing", all.filter(r => r.reviewer === myKey()), "Nothing to review right now. When your supervisor asks you to review a paper, it appears here."),
-    ...sec("Reviews of your papers", all.filter(r => r.owner === myKey()), "No reviews of your papers yet."));
+    ...sec("Reviews of your papers", all.filter(r => r.reviewer !== myKey() && reviewAuthors(r).includes(myKey())), "No reviews of your papers yet. Reviews of papers you co-author show here too."));
 }
 
 /* ---------- publications ---------- */

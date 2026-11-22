@@ -325,7 +325,7 @@ function canSee_(u, segs) {
   if (segs[0] === "groups") return segs.length >= 2 && isMember_(segs[1], u.login.slice("student:".length));
   if (segs.length === 4 && segs[0] === "students" && segs[2] === "papers" && segs[1] !== u.login.slice(8)) return isCoauthor_(segs.join("/"), u.login.slice(8)) || isReviewer_(segs.join("/"), u.login.slice(8));
   if (segs.length === 4 && segs[0] === "supervisor" && segs[2] === "papers") return isCoauthor_(segs.join("/"), u.login.slice(8)) || isReviewer_(segs.join("/"), u.login.slice(8));   // read-only for lab co-authors and reviewers
-  if (segs[0] === "reviews") { const r = segs.length === 2 ? getDoc_(segs.join("/")) : null, k = u.login.slice(8); return !!r && (r.reviewer === k || r.owner === k); }
+  if (segs[0] === "reviews") { const r = segs.length === 2 ? getDoc_(segs.join("/")) : null, k = u.login.slice(8); return !!r && (r.reviewer === k || isPaperAuthor_(r, k)); }
   return segs.length >= 2 && segs[0] === "students" && segs[1] === u.login.slice("student:".length);
 }
 function splitPath_(p) {
@@ -670,7 +670,7 @@ function readActivity_(u) {
     const r = v[i], e = { ts: Number(r[0]), actor: String(r[1]), actorName: String(r[2]), role: String(r[3]), student: String(r[4]), scope: String(r[5]), tab: String(r[6]), text: String(r[7]) };
     if (!e.ts || e.actor === u.login) continue;
     const rv = e.scope === "review" ? getDoc_("reviews/" + e.student) : null;
-    if (u.role === "supervisor" || e.scope === "all" || (e.scope === "group" ? isMember_(e.student, myKey) : e.scope === "review" ? !!rv && (rv.reviewer === myKey || rv.owner === myKey) : e.student === myKey)) out.push(e);
+    if (u.role === "supervisor" || e.scope === "all" || (e.scope === "group" ? isMember_(e.student, myKey) : e.scope === "review" ? !!rv && (rv.reviewer === myKey || isPaperAuthor_(rv, myKey)) : e.student === myKey)) out.push(e);
   }
   return out;
 }
@@ -1006,11 +1006,14 @@ function buildIcs_(u) {
 /* ================================================================ internal paper review
  *  reviews/<id>: { paperPath, paperTitle, owner (student key or "__sup"), reviewer (student key), due, note,
  *                  status "Assigned" | "Done", verdict, comments: [{ text, at, by, byRole, byName }] }
- *  Only the supervisor assigns or removes reviewers (any number per paper). The reviewer, the paper's author and
- *  the supervisor see the review and can comment; the reviewer (or supervisor) submits it with a verdict.
+ *  Only the supervisor assigns or removes reviewers (any number per paper). The reviewer, every lab author of the
+ *  paper (the student who added it and its lab co-authors) and the supervisor see the review and can comment; the reviewer (or supervisor) submits it with a verdict.
  *  Each review is its own thread: two reviewers of one paper don't see each other's reviews.
  */
 const REVIEW_VERDICTS = ["Ready to submit", "Minor changes", "Major changes"];
+/** Lab students who are authors of the reviewed paper: the one who added it plus its lab co-authors. */
+function paperAuthors_(r) { const p = getDoc_(r.paperPath) || {}; return [r.owner].concat(p.coauthors || []).filter((k, i, a) => k && k !== "__sup" && a.indexOf(k) === i); }
+function isPaperAuthor_(r, key) { return !!key && paperAuthors_(r).indexOf(key) >= 0; }
 function isReviewer_(path, key) { return loadDocs_().list.some(d => d.path.indexOf("reviews/") === 0 && d.data && d.data.paperPath === path && d.data.reviewer === key); }
 function ownerName_(owner) { if (owner === "__sup") { const s = users_().filter(x => x.role === "supervisor")[0]; return s ? s.name || "the supervisor" : "the supervisor"; } return studentName_(owner); }
 function reviewerName_(k) { return studentName_(k); }
@@ -1020,7 +1023,7 @@ function checkReview_(d, cur) {
   if (!paper || g.length !== 4 || g[2] !== "papers" || (g[0] !== "students" && g[0] !== "supervisor")) fail_("invalid-argument", "That paper no longer exists.");
   const owner = g[0] === "supervisor" ? "__sup" : g[1], reviewer = String(d.reviewer || (cur && cur.reviewer) || "");
   if (!getDoc_("students/" + reviewer)) fail_("invalid-argument", "Choose a student from the lab as the reviewer.");
-  if (reviewer === owner) fail_("invalid-argument", "The author can't review their own paper.");
+  if (reviewer === owner || (paper.coauthors || []).indexOf(reviewer) >= 0) fail_("invalid-argument", studentName_(reviewer) + " is an author of this paper and can't review it.");
   if (!cur && loadDocs_().list.some(x => x.path.indexOf("reviews/") === 0 && x.data.paperPath === pp && x.data.reviewer === reviewer)) fail_("already-exists", studentName_(reviewer) + " is already reviewing this paper.");
   const due = /^\d{4}-\d{2}-\d{2}$/.test(String(d.due || "")) ? d.due : "";
   const out = { paperPath: pp, paperTitle: String(paper.title || "").slice(0, 300), owner: owner, reviewer: reviewer, due: due, note: String(d.note || "").slice(0, 1000),
@@ -1033,7 +1036,7 @@ function reviewFor_(u, id) {
   const path = "reviews/" + String(id || "").replace(/[^A-Za-z0-9_.\-]/g, ""), r = getDoc_(path);
   if (!r) fail_("not-found", "This review no longer exists.");
   const k = u.role === "supervisor" ? null : u.login.slice(8);
-  if (k && r.reviewer !== k && r.owner !== k) fail_("permission-denied", "You aren't part of this review.");
+  if (k && r.reviewer !== k && !isPaperAuthor_(r, k)) fail_("permission-denied", "You aren't part of this review.");
   return { path: path, r: r, k: k };
 }
 function reviewComment_(u, req) {
@@ -1062,7 +1065,7 @@ function reviewStatus_(u, req) {
     text: req.done ? reviewerName_(x.r.reviewer) + " finished reviewing “" + x.r.paperTitle + "”: " + x.r.verdict : "Review of “" + x.r.paperTitle + "” reopened" }));
   if (req.done) safely_(() => {
     const lines = [reviewerName_(x.r.reviewer) + " finished reviewing “" + x.r.paperTitle + "”.", "Verdict: " + x.r.verdict, "Read the comments on the site's Reviews tab."];
-    if (x.r.owner !== "__sup") sendMail_(studentEmail_(x.r.owner), "Review done: " + x.r.paperTitle, studentName_(x.r.owner), lines, STUDENT_LINK_());
+    paperAuthors_(x.r).forEach(k => sendMail_(studentEmail_(k), "Review done: " + x.r.paperTitle, studentName_(k), lines, STUDENT_LINK_()));
     sendMail_(supervisorEmail_(), "Review done: " + x.r.paperTitle, "Supervisor", lines, SUP_LINK_());
   });
   return { rev: rev };
