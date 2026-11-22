@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl, calendarFeed } from "./core.js?v=20261122-1600";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl, calendarFeed, act } from "./core.js?v=20261122-1800";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -32,7 +32,7 @@ const PTYPES = ["Journal article", "Conference paper", "Review article", "Book c
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
-const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], leaves: [], messages: [], msgstate: [], supPapers: [], supRefs: [], supTab: "tasks", groups: [], gmsgs: [], gseen: [], thread: "dm", sharedPapers: [], leaveYear: new Date().getFullYear(), tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
+const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], leaves: [], messages: [], msgstate: [], supPapers: [], supRefs: [], reviews: [], supTab: "tasks", groups: [], gmsgs: [], gseen: [], thread: "dm", sharedPapers: [], leaveYear: new Date().getFullYear(), tab: "tasks", openPapers: new Set(), openReviews: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
 /** Wraps a form's submit handler: while it is saving, further clicks/Enter are ignored and the buttons are locked. */
 function guardSubmit(handler) {
@@ -820,6 +820,118 @@ function calendarPanel() {
     btn, out);
 }
 
+
+/* ---------- internal paper review ---------- */
+const VERDICTS = ["Ready to submit", "Minor changes", "Major changes"];
+function reviewsFor(p) { const path = P("papers", p); return (S.reviews || []).filter(r => r.paperPath === path); }
+function paperByPath(path) { return [...S.papers, ...(S.supPapers || [])].find(p => P("papers", p) === path) || null; }
+function verdictChip(v) { return h("span", { class: "chip " + (v === "Ready to submit" ? "good" : v === "Major changes" ? "bad" : "warn"), text: v }); }
+function dueText(r) {
+  if (r.status === "Done") return "Done " + fmtD(r.doneOn);
+  if (!r.due) return "No due date";
+  const left = diff(todayStr(), r.due);
+  return left < 0 ? "Overdue (was due " + fmtD(r.due) + ")" : left === 0 ? "Due today" : left === 1 ? "Due tomorrow" : "Due " + fmtD(r.due) + " · " + left + " days left";
+}
+function goToReview(id) {
+  if (S.isOwner) { S.supTab = "reviews"; select("__mine"); } else { S.tab = "reviews"; select(S.sel); }
+  setTimeout(() => { const el = document.getElementById("review-" + id); if (el) { el.open = true; el.scrollIntoView({ block: "start", behavior: "smooth" }); } }, 60);
+}
+/** Inside a paper card: the reviews of this paper, and (supervisor) a form to assign more reviewers. */
+function paperReviewBox(p) {
+  const list = reviewsFor(p), owner = p.studentId === SUP ? SUP : p.studentId;
+  if (!S.isOwner && !list.length) return null;
+  const rows = list.map(r => h("li", null, h("button", { type: "button", class: "linkish", text: nameOf(r.reviewer) || "Reviewer", onclick: () => goToReview(r.id) }),
+    h("span", { class: "muted", text: " · " + dueText(r) + " · " + plural((r.comments || []).length, "comment") }), r.verdict && r.status === "Done" ? verdictChip(r.verdict) : null));
+  let form = null;
+  if (S.isOwner) {
+    const taken = new Set(list.map(r => r.reviewer)), sel = h("select", { "aria-label": "Reviewer" },
+      h("option", { value: "", text: "Choose a reviewer…" }),
+      ...byCourse(S.students.filter(x => x.id !== owner && !taken.has(x.id))).map(([c, l]) => h("optgroup", { label: c }, l.map(x => h("option", { value: x.id, text: x.name })))));
+    const due = h("input", { type: "date", "aria-label": "Review due date", min: todayStr() }), note = h("input", { maxlength: "1000", placeholder: "What to focus on (optional), e.g. related work and figures" });
+    form = h("details", { class: "sub review-assign" }, h("summary", { text: list.length ? "+ Assign another reviewer" : "+ Assign a reviewer" }),
+      h("form", { class: "edit-box", style: "margin-top:8px", onsubmit: async e => {
+          e.preventDefault();
+          if (!sel.value) { say("Choose a reviewer from the lab."); return; }
+          if (due.value && due.value < todayStr()) { say("The due date can't be in the past."); return; }
+          const name = nameOf(sel.value);
+          const ok = await write(db => db.collection("reviews").add({ paperPath: P("papers", p), reviewer: sel.value, due: due.value, note: note.value.trim(), status: "Assigned", comments: [], paperTitle: p.title, owner, createdAt: Date.now(), assignedOn: todayStr() }), name + " will review this paper. They've been notified.");
+          if (ok) { sel.value = ""; due.value = ""; note.value = ""; e.target.closest("details").open = false; }
+        } },
+        h("div", { class: "row" }, h("label", { class: "fieldlabel" }, "Reviewer", sel), h("label", { class: "fieldlabel" }, "Due by (optional)", due)),
+        h("label", { class: "fieldlabel" }, "Note for the reviewer", note),
+        h("div", null, h("button", { class: "btn small", type: "submit", text: "Assign reviewer" })),
+        h("p", { class: "note", text: "The reviewer can read this paper (and its Overleaf link) and write comments that only they, the author and you can see. Assign as many reviewers as you like; each gets a separate review." })));
+  }
+  return h("div", { class: "review-box" }, h("span", { class: "label", text: "Internal review" + (list.length ? " · " + list.filter(r => r.status === "Done").length + " of " + list.length + " done" : "") }),
+    rows.length ? h("ul", { class: "review-rows" }, ...rows) : h("p", { class: "note", text: "No reviewers yet." }), form);
+}
+function reviewsPanel() {
+  return h("section", { class: "panel sec-review" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Internal reviews" }), h("span", { class: "muted", id: "rv-count" })),
+    h("p", { class: "note", text: S.isOwner ? "Reviews you've assigned. Assign reviewers from a paper's card (Internal review). Each review is visible only to its reviewer, the paper's author and you." : "Papers you've been asked to review, and reviews of your own papers. Only the reviewer, the author and the supervisor see a review." }),
+    h("div", { id: "rv-list" }));
+}
+function reviewCard(r) {
+  const p = paperByPath(r.paperPath), mine = !S.isOwner && r.reviewer === myKey(), author = !S.isOwner && r.owner === myKey();
+  const role = mine ? "You're reviewing" : author ? "Review of your paper" : "Review";
+  const thread = h("div", { class: "rv-thread" }, ...((r.comments || []).length ? r.comments.map(c => h("div", { class: "rv-c" + (c.by === S.uid ? " me" : "") },
+      h("div", { class: "rv-c-head" }, h("b", { text: c.by === S.uid ? "You" : c.byRole === "supervisor" ? "Supervisor" : c.byName }), h("span", { class: "muted", text: (c.byRole !== "supervisor" && c.by === "student:" + r.reviewer ? "reviewer · " : "") + fmtD(localDate(c.at)) + " " + msgTime(c.at) })),
+      h("div", { class: "rv-c-text", text: c.text })))
+    : [h("p", { class: "note", text: mine ? "No comments yet. Read the paper, then write your review below. You can add several comments before submitting." : "No comments yet." })]));
+  const box = h("textarea", { id: "rvc-" + r.id, rows: "4", maxlength: "6000", placeholder: mine ? "Your review: strengths, problems, suggestions (section by section if you like)…" : "Reply or ask the reviewer something…" });
+  const send = h("button", { class: "btn small", type: "button", text: "Add comment", onclick: async () => {
+    const t = box.value.trim(); if (!t) { say("Write a comment first."); box.focus(); return; }
+    send.disabled = true; send.textContent = "Saving…";
+    try { await act("reviewComment", { id: r.id, text: t }); box.value = ""; say("Comment added"); } catch (e) { say(e.message || "Couldn't save the comment."); }
+    finally { send.disabled = false; send.textContent = "Add comment"; }
+  } });
+  const actions = h("div", { class: "row-btns rv-actions" });
+  if ((mine || S.isOwner) && r.status !== "Done") {
+    const v = h("select", { "aria-label": "Verdict" }, h("option", { value: "", text: "Verdict…" }), ...VERDICTS.map(x => h("option", { value: x, text: x })));
+    actions.append(v, h("button", { class: "btn small", type: "button", text: "Submit review", onclick: async () => {
+      if (!v.value) { say("Choose a verdict first: " + VERDICTS.join(", ") + "."); v.focus(); return; }
+      if (box.value.trim()) { say("Add your comment first (Add comment), then submit."); return; }
+      try { await act("reviewStatus", { id: r.id, done: true, verdict: v.value }); say("Review submitted: " + v.value); } catch (e) { say(e.message || "Couldn't submit the review."); }
+    } }));
+  }
+  if ((mine || S.isOwner) && r.status === "Done") actions.append(h("button", { class: "btn ghost small", type: "button", text: "Reopen review", onclick: async () => { try { await act("reviewStatus", { id: r.id, done: false }); say("Review reopened"); } catch (e) { say(e.message); } } }));
+  if (S.isOwner) {
+    const due = h("input", { type: "date", value: r.due || "", "aria-label": "Change due date", onchange: e => write(db => db.doc("reviews/" + r.id).update({ due: e.target.value }), e.target.value ? "Due date changed to " + fmtD(e.target.value) : "Due date removed") });
+    let armed = null; const del = h("button", { class: "btn danger small", type: "button", text: "Remove review" });
+    del.onclick = () => { if (!armed) { del.textContent = "Confirm: remove review and comments"; del.classList.add("armed"); armed = setTimeout(() => { armed = null; del.textContent = "Remove review"; del.classList.remove("armed"); }, 5000); return; } clearTimeout(armed); write(db => db.doc("reviews/" + r.id).delete(), "Review removed"); };
+    actions.append(h("label", { class: "inline-label" }, "Due ", due), del);
+  }
+  return h("details", { class: "task review" + (r.status === "Done" ? " done" : ""), id: "review-" + r.id, open: S.openReviews.has(r.id),
+      ontoggle: e => { e.target.open ? S.openReviews.add(r.id) : S.openReviews.delete(r.id); } },
+    h("summary", null,
+      h("div", { class: "t-main" },
+        h("span", { class: "t-title", text: r.paperTitle || (p && p.title) || "Paper" }),
+        h("div", { class: "t-sub" }, h("span", { class: "chip plain", text: role }),
+          h("span", { text: "by " + (nameOf(r.owner) || "author") + " · reviewer " + (nameOf(r.reviewer) || "—") }),
+          r.status === "Done" ? verdictChip(r.verdict) : h("span", { class: "chip " + (r.due && diff(todayStr(), r.due) < 0 ? "bad" : "warn"), text: dueText(r) }),
+          h("span", { class: "muted", text: plural((r.comments || []).length, "comment") })))),
+    h("div", { class: "t-body" },
+      p && p.overleaf ? h("p", null, h("a", { class: "textlink", href: p.overleaf, target: "_blank", rel: "noopener", text: "Open the draft on Overleaf ↗" })) : h("p", { class: "note", text: p ? "No Overleaf link on this paper yet. Ask the author to add it, or to share the PDF in Messages." : "This paper is no longer in the tracker." }),
+      p && p.venue ? h("p", { class: "note", text: "Target: " + p.venue + (p.deadline ? " · deadline " + fmtD(p.deadline) : "") }) : null,
+      r.note ? h("div", { class: "fb fb-inline" }, h("span", { class: "fb-tag", text: "Supervisor's note" }), h("span", { text: r.note })) : null,
+      thread,
+      h("div", { class: "rv-compose" }, box, h("div", null, send)),
+      actions.childNodes.length ? actions : null));
+}
+function refreshReviews() {
+  const box = document.getElementById("rv-list"); if (!box) return;
+  const ae = document.activeElement; if (ae && box.contains(ae) && (ae.tagName === "TEXTAREA" || ae.tagName === "SELECT" || ae.tagName === "INPUT")) return;   // typing a comment
+  const all = [...(S.reviews || [])].sort((a, b) => (a.status === "Done") - (b.status === "Done") || (a.due || "9999").localeCompare(b.due || "9999") || (b.createdAt || 0) - (a.createdAt || 0));
+  const open = all.filter(r => r.status !== "Done").length;
+  document.getElementById("rv-count").textContent = all.length ? open + " open · " + (all.length - open) + " done" : "";
+  const tn = document.getElementById("tabn-reviews"); if (tn) tn.textContent = all.filter(r => r.status !== "Done" && r.reviewer === myKey()).length || "";
+  const sec = (title, list, empty) => [h("div", { class: "task-group" }, h("span", { text: title }), h("span", { class: "mono", text: String(list.length) })),
+    ...(list.length ? list.map(reviewCard) : [h("p", { class: "note", text: empty })])];
+  if (S.isOwner) box.replaceChildren(...sec("Open", all.filter(r => r.status !== "Done"), "No open reviews. Assign one from any paper's card."), ...(all.some(r => r.status === "Done") ? sec("Done", all.filter(r => r.status === "Done"), "") : []));
+  else box.replaceChildren(...sec("Papers you're reviewing", all.filter(r => r.reviewer === myKey()), "Nothing to review right now. When your supervisor asks you to review a paper, it appears here."),
+    ...sec("Reviews of your papers", all.filter(r => r.owner === myKey()), "No reviews of your papers yet."));
+}
+
 /* ---------- publications ---------- */
 /* "__sup" stands for the supervisor's own workspace (their papers and reading list live under supervisor/me/). */
 const SUP = "__sup";
@@ -917,6 +1029,7 @@ function paperCard(p) {
       p.overleaf ? h("a", { class: "btn small overleaf", href: p.overleaf, target: "_blank", rel: "noopener", text: "Open draft in Overleaf ↗" })
         : h("span", { class: "note", text: canEditPaper(p) ? "No Overleaf link yet. Add it under \"Edit paper details\"." : "No Overleaf link yet." })),
     h("p", { class: "note", text: [p.type || "Journal article", p.venue ? (pStatus(p) === "Currently writing" ? "Target venue: " : "Venue: ") + p.venue : null, authorLine(p) ? "Authors: " + authorLine(p) : null].filter(Boolean).join("  ·  ") }),
+    paperReviewBox(p),
     (p.coauthors || []).filter(nameOf).length || p.studentId !== viewSid() ? h("div", { class: "coauth-row" },
       h("span", { class: "label", text: "In the lab" }),
       h("span", { class: "chip plain", text: (ownerOf(p) || "Student") + " · added it" }),
@@ -1143,12 +1256,13 @@ function buildStudent(s) {
         h("ul", { class: "refs", id: "stu-sched" })),
       h("div", { class: "cols" }, meetPanel, logPanel), S.canWrite && !S.isOwner ? calendarPanel() : null),
     profile: h("div", { class: "tabpane", "data-pane": "profile" }, profilePanel(s), leavePanel(s)),
-    messages: h("div", { class: "tabpane", "data-pane": "messages" }, messagePanel(s)) };
+    messages: h("div", { class: "tabpane", "data-pane": "messages" }, messagePanel(s)),
+    reviews: S.isOwner ? null : h("div", { class: "tabpane", "data-pane": "reviews" }, reviewsPanel()) };
   const tabBtn = (k, l) => h("button", { type: "button", role: "tab", "data-tab": k, class: "tab-" + k, "aria-selected": S.tab === k ? "true" : "false",
     onclick: () => { S.tab = k; showTab(); } }, l, h("span", { class: "n", id: "tabn-" + k }));
-  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Read articles"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"), tabBtn("messages", "Messages"), tabBtn("profile", "Profile & leave"));
+  const tabs = h("div", { class: "tabs", role: "tablist" }, tabBtn("tasks", "Tasks"), tabBtn("papers", "Publications"), tabBtn("refs", "Read articles"), S.isOwner ? null : tabBtn("confs", "Conferences"), tabBtn("meetings", "Meetings"), tabBtn("messages", "Messages"), S.isOwner ? null : tabBtn("reviews", "Reviews"), tabBtn("profile", "Profile & leave"));
   if (S.isOwner && S.tab === "confs") S.tab = "tasks";
-  d.replaceChildren(...[head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings, panes.messages, panes.profile].filter(Boolean));
+  d.replaceChildren(...[head, tabs, panes.tasks, panes.papers, panes.refs, panes.confs, panes.meetings, panes.messages, panes.reviews, panes.profile].filter(Boolean));
   showTab();
   updSig = null; pupdSig = null;
 }
@@ -1705,6 +1819,7 @@ function refreshStudent(s) {
     stat(leaveTotal(s.id, thisYear()) + "d", "Leave in " + thisYear()));
   refreshProfile(s);
   refreshMessages(s);
+  refreshReviews();
   document.querySelectorAll("#task-filters button").forEach(b => b.setAttribute("aria-pressed", b.dataset.f === S.filter ? "true" : "false"));
   open.sort(sortTasks); done.sort((a, b) => (doneDateOf(b) || "").localeCompare(doneDateOf(a) || ""));
   const groupHead = (label, n) => h("div", { class: "task-group" }, h("span", { text: label }), h("span", { class: "mono", text: String(n) }));
@@ -1765,7 +1880,7 @@ function latestFeedback(item) {
 
 
 /* ---------- Supervisor workspace: own tasks, own papers, reading list, meetings ---------- */
-const SUP_TABS = [["tasks", "Tasks & reminders"], ["papers", "My papers"], ["reading", "Reading list"], ["meetings", "Meetings"]];
+const SUP_TABS = [["tasks", "Tasks & reminders"], ["papers", "My papers"], ["reviews", "Reviews"], ["reading", "Reading list"], ["meetings", "Meetings"]];
 function supSelf() { return { id: SUP, name: S.myName || "Supervisor" }; }
 function supPage() {
   const tabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Supervisor" }, SUP_TABS.map(([k, l]) =>
@@ -1781,6 +1896,7 @@ function supPage() {
     h("div", { class: "tabpane", "data-spane": "tasks" }, minePage()),
     h("div", { class: "tabpane", "data-spane": "papers" }, papers),
     h("div", { class: "tabpane", "data-spane": "reading" }, readingPanel()),
+    h("div", { class: "tabpane", "data-spane": "reviews" }, reviewsPanel()),
     h("div", { class: "tabpane", "data-spane": "meetings" }, schedPage(), calendarPanel()));
 }
 function showSupTab() {
@@ -1798,6 +1914,8 @@ function refreshSup() {
   n("papers", pp.length);
   n("reading", (S.supRefs || []).filter(r => !r.read).length);
   n("meetings", upcomingSched().length);
+  n("reviews", (S.reviews || []).filter(r => r.status !== "Done").length);
+  refreshReviews();
   refreshReading();
 }
 function readingPanel() {
@@ -1981,6 +2099,7 @@ function bellOpen(e) {
   if (e.tab && e.tab.indexOf("group:") === 0) { const gid = e.tab.slice(6); if (S.isOwner) select("__g:" + gid); else { S.tab = "messages"; S.thread = gid; select(S.sel); } return; }
   if (e.tab === "messages") S.thread = "dm";
   if (S.isOwner && e.tab === "papers" && !e.student) { S.supTab = "papers"; select("__mine"); return; }
+  if (e.tab === "reviews") { if (S.isOwner) { S.supTab = "reviews"; select("__mine"); } else { S.tab = "reviews"; select(S.sel); } return; }
   if (e.tab === "confs") { if (S.isOwner) select("__confs"); else { S.tab = "confs"; select(S.sel); } return; }
   if (S.isOwner) { if (!e.student || !S.students.some(x => x.id === e.student)) { select(null); return; } S.tab = e.tab || "tasks"; select(e.student); }
   else { S.tab = e.tab || "tasks"; select(S.sel); }
@@ -2069,6 +2188,7 @@ export async function start(pageRole) {
       catch (e) { const r = document.createRange(); r.selectNodeContents(document.getElementById("signupUrl")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); say("Press Ctrl+C to copy the selected link"); }
     };
     db.collection("supervisor/me/papers").onSnapshot(snap => { S.supPapers = snap.docs.map(d => ({ ...d.data(), id: d.id, studentId: SUP })); renderAll(); }, () => {});
+    db.collection("reviews").onSnapshot(snap => { S.reviews = snap.docs.map(d => ({ ...d.data(), id: d.id })); renderAll(); }, () => {});
     db.collection("supervisor/me/refs").onSnapshot(snap => { S.supRefs = snap.docs.map(d => ({ ...d.data(), id: d.id, studentId: SUP })); renderAll(); }, () => {});
     db.collection("supervisor/me/items").onSnapshot(snap => {
       S.mine = snap.docs.map(d => ({ ...d.data(), id: d.id }));
@@ -2091,6 +2211,7 @@ export async function start(pageRole) {
       S.myName = snap.data().name || S.myName;
       showAccount(S.myName, "Student · " + (snap.data().admissionNo || key.toUpperCase()) + " · " + courseOf(snap.data()));
       watchStudent(key); S.sel = key;
+      if (!S.revSub) S.revSub = db.collection("reviews").onSnapshot(sn => { S.reviews = sn.docs.map(d => ({ ...d.data(), id: d.id })); renderAll(); }, () => {});
       if (!S.supSub) S.supSub = db.collection("supervisor/me/papers").onSnapshot(sn => { S.supPapers = sn.docs.map(d => ({ ...d.data(), id: d.id, studentId: SUP, shared: true })); renderAll(); }, () => {});
       if (!S.sharedSub) S.sharedSub = db.collectionGroup("papers").onSnapshot(sn => {
         S.sharedPapers = sn.docs.filter(d => d.owner !== key).map(d => ({ ...d.data(), id: d.id, studentId: d.owner, shared: true })); rebuildFlat(); renderAll();

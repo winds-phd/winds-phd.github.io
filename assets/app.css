@@ -611,3 +611,23 @@ li.reading.is-read .ref-title { color: var(--muted); }
 .cal-link { display: flex; gap: 8px; }
 .cal-link input { flex: 1; min-width: 0; font-size: 0.82rem; }
 .cal-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 0.9rem; }
+
+/* ---------- internal paper review ---------- */
+.panel.sec-review { background: var(--pubs-bg); border-color: var(--pubs-line); }
+.sec-review h3 { color: var(--pubs-ink); }
+.tabs button.tab-reviews[aria-selected="true"], .tabs button.tab-sup-reviews[aria-selected="true"] { background: var(--pubs-bg); border-bottom-color: var(--pubs-ink); color: var(--pubs-ink); }
+.tabs button.tab-reviews::before, .tabs button.tab-sup-reviews::before { background: var(--pubs-ink); }
+.review-box { display: grid; gap: 6px; padding: 10px 12px; border: 1px dashed var(--pubs-line); border-radius: 8px; background: var(--surface); }
+.review-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 0.9rem; }
+.review-rows li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.review-assign summary { font-size: 0.88rem; }
+details.task.review { background: var(--surface); }
+.rv-thread { display: grid; gap: 8px; margin: 10px 0; }
+.rv-c { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
+.rv-c.me { border-color: var(--pubs-line); background: var(--pubs-bg); }
+.rv-c-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 0.85rem; margin-bottom: 4px; }
+.rv-c-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.rv-compose { display: grid; gap: 8px; }
+.rv-compose textarea { width: 100%; }
+.rv-actions { margin-top: 10px; align-items: center; }
+.rv-actions select { width: auto; }

@@ -77,6 +77,14 @@ When adding or editing a paper there are two co-author fields:
 - Optional **Full author list in order** if the exact order matters; otherwise the names above are used.
 - Only the student who added the paper and the supervisor can change it; co-authors see it read-only. On the overview, each paper is listed once, with "with <co-authors>" under the student's name.
 
+## Internal paper review
+- **Assigning (supervisor):** open any paper (a student's, or your own under Supervisor → My papers) → **Internal review → + Assign a reviewer**. Choose a student, optionally a due date and a note on what to focus on. Assign as many reviewers as you like; each gets a separate review. The reviewer gets an email and a bell alert.
+- **Reviewing (student):** the **Reviews** tab shows "Papers you're reviewing", with the Overleaf link, target venue and your note. The reviewer writes one or more comments, then **Submit review** with a verdict: Ready to submit, Minor changes or Major changes. At least one comment is required. The author and you get an email.
+- **Who sees what:** a review is visible only to its reviewer, the paper's author and you. Two reviewers of the same paper don't see each other's reviews. The author and you can reply in the thread. Reviewers can read the paper but not edit it.
+- **Your Reviews tab** (Supervisor → Reviews) lists every review, open ones first. There you can change the due date, reopen a review, or remove it. Each paper card shows "Internal review · 1 of 2 done".
+- **Reminders:** the reviewer gets an email the day before the due date. Comments trigger bell alerts only, not emails.
+- Deleting a paper or removing a student also removes the related reviews.
+
 ## Paper deadlines
 - On any paper's form (add or edit): **Submission deadline** and **What's due** (e.g. "INFOCOM 2027 full paper"). **Fill from Upcoming conferences** copies a conference's name and deadline in one step; journal or special-issue deadlines can be typed.
 - While the paper is a **draft**, its card shows a countdown ("Deadline 29 Nov · 7 days left", amber at 14 days, red at 7).

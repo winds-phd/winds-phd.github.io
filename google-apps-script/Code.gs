@@ -92,7 +92,7 @@ function doPost(e) {
 
 function fail_(code, message) { const e = new Error(message); e.apiCode = code; throw e; }
 
-const WRITE_ACTIONS = { resetWithToken: 1, setup: 1, register: 1, resetSecret: 1, set: 1, update: 1, delete: 1, add: 1, login: 1, logout: 1 };
+const WRITE_ACTIONS = { reviewComment: 1, reviewStatus: 1, resetWithToken: 1, setup: 1, register: 1, resetSecret: 1, set: 1, update: 1, delete: 1, add: 1, login: 1, logout: 1 };
 
 function handle_(req) {
   const action = String(req.action || "");
@@ -211,6 +211,8 @@ function dispatch_(action, req) {
 
     case "upload": return uploadFile_(requireUser_(req), req);
     case "calFeed": return calFeed_(requireUser_(req), !!req.reset);
+    case "reviewComment": return reviewComment_(requireUser_(req), req);
+    case "reviewStatus": return reviewStatus_(requireUser_(req), req);
     case "file": return getFile_(requireUser_(req), req);
 
     case "sync": {
@@ -237,6 +239,7 @@ function dispatch_(action, req) {
       const cur = getDoc_(path), prevRev = currentRev_();
       if (u.role === "student" && segs[0] === "students" && segs[1] !== u.login.slice(8)) fail_("permission-denied", "Only the student who added this paper, or the supervisor, can change it.");
       if (u.role === "student" && segs[0] === "supervisor") fail_("permission-denied", "Only the supervisor can change the supervisor's papers.");
+      if (segs[0] === "reviews") { if (u.role !== "supervisor") fail_("permission-denied", "Use the review's own buttons to comment or submit."); data = checkReview_(data, cur); }
       if (segs[0] === "conferences" && u.role !== "supervisor" && cur && cur.createdBy !== u.login) fail_("permission-denied", "You can only change conference entries you added.");
       if (action === "update") { if (!cur) fail_("not-found", "That record no longer exists."); data = Object.assign({}, cur, data); }
       if (isLeave_(segs)) data = checkLeave_(u, cur, data);
@@ -259,6 +262,7 @@ function dispatch_(action, req) {
       if (u.role === "student" && segs[0] === "students" && segs[2] === "schedule") fail_("permission-denied", "Only the supervisor can cancel scheduled meetings.");
       if (u.role === "student" && segs[0] === "students" && segs[1] !== u.login.slice(8)) fail_("permission-denied", "Only the student who added this paper, or the supervisor, can delete it.");
       if (u.role === "student" && segs[0] === "supervisor") fail_("permission-denied", "Only the supervisor can delete the supervisor's papers.");
+      if (u.role === "student" && segs[0] === "reviews") fail_("permission-denied", "Only the supervisor can remove a review.");
       if (segs[0] === "groups" && u.role !== "supervisor" && !(segs[2] === "messages" && segs.length === 4 && (getDoc_(path) || {}).createdBy === u.login))
         fail_("permission-denied", segs.length === 2 ? "Only the supervisor can delete a group." : "You can only delete your own messages.");
       if (u.role === "student" && isLeave_(segs)) fail_("permission-denied", "Leave records can't be deleted. Withdraw a pending request instead.");
@@ -269,6 +273,8 @@ function dispatch_(action, req) {
       if (segs[2] === "messages" && segs.length === 4) safely_(() => trashFiles_(old));
       if (u.role === "supervisor" && segs.length === 2 && (segs[0] === "groups" || segs[0] === "students")) safely_(() => loadDocs_().list.filter(d => d.path.indexOf(path + "/messages/") === 0).forEach(d => trashFiles_(d.data)));
       deleteDoc_(path);
+      if (segs[2] === "papers" && segs.length === 4) loadDocs_().list.filter(d => d.path.indexOf("reviews/") === 0 && d.data.paperPath === path).map(d => d.path).forEach(deleteDoc_);
+      if (u.role === "supervisor" && segs.length === 2 && segs[0] === "students") loadDocs_().list.filter(d => d.path.indexOf("reviews/") === 0 && (d.data.reviewer === segs[1] || d.data.owner === segs[1])).map(d => d.path).forEach(deleteDoc_);
       safely_(() => logChange_(u, "delete", segs, old, null));
       if (u.role === "supervisor" && segs.length === 2 && segs[0] === "groups") deletePrefix_(path + "/");
       if (u.role === "supervisor" && segs.length === 2 && segs[0] === "students") {
@@ -293,6 +299,7 @@ function dispatch_(action, req) {
       }
       if (segs[0] === "students" && segs[2] === "msgstate") fail_("invalid-argument", "Use set for read status.");
       if (segs[0] === "groups") data = checkGroupAdd_(u, segs, data);
+      if (segs[0] === "reviews") { if (u.role !== "supervisor" || segs.length !== 1) fail_("permission-denied", "Only the supervisor can assign reviewers."); data = checkReview_(data, null); }
       if ((segs[0] === "students" || segs[0] === "supervisor") && segs[2] === "papers" && segs.length === 3) data.coauthors = cleanCoauthors_(data.coauthors, segs[1]);   // record who added it, so only they (or the supervisor) can remove it
       const want = String(req.id || "");
       const id = SEGMENT.test(want) && want.length <= 40 ? want : Utilities.getUuid().replace(/-/g, "").slice(0, 20);
@@ -316,8 +323,9 @@ function canSee_(u, segs) {
   if (u.role === "supervisor") return true;
   if (segs[0] === "conferences") return true;
   if (segs[0] === "groups") return segs.length >= 2 && isMember_(segs[1], u.login.slice("student:".length));
-  if (segs.length === 4 && segs[0] === "students" && segs[2] === "papers" && segs[1] !== u.login.slice(8)) return isCoauthor_(segs.join("/"), u.login.slice(8));
-  if (segs.length === 4 && segs[0] === "supervisor" && segs[2] === "papers") return isCoauthor_(segs.join("/"), u.login.slice(8));   // the supervisor's own paper, read-only for its lab co-authors
+  if (segs.length === 4 && segs[0] === "students" && segs[2] === "papers" && segs[1] !== u.login.slice(8)) return isCoauthor_(segs.join("/"), u.login.slice(8)) || isReviewer_(segs.join("/"), u.login.slice(8));
+  if (segs.length === 4 && segs[0] === "supervisor" && segs[2] === "papers") return isCoauthor_(segs.join("/"), u.login.slice(8)) || isReviewer_(segs.join("/"), u.login.slice(8));   // read-only for lab co-authors and reviewers
+  if (segs[0] === "reviews") { const r = segs.length === 2 ? getDoc_(segs.join("/")) : null, k = u.login.slice(8); return !!r && (r.reviewer === k || r.owner === k); }
   return segs.length >= 2 && segs[0] === "students" && segs[1] === u.login.slice("student:".length);
 }
 function splitPath_(p) {
@@ -594,6 +602,12 @@ function sendScheduledEmails() {
         }
       }
 
+      // 3c) internal reviews: a reminder to the reviewer the day before the due date
+      if (hour >= DUE_REMINDER_HOUR && segs[0] === "reviews" && segs.length === 2 && x.status !== "Done" && x.due === tomorrow && x.dueReminded !== x.due) {
+        if (sendMail_(studentEmail_(x.reviewer), "Review due tomorrow: " + x.paperTitle, studentName_(x.reviewer), ["Your review of “" + x.paperTitle + "” by " + ownerName_(x.owner) + " is due tomorrow (" + niceWhen_(x.due) + ")."], STUDENT_LINK_())) sent++;
+        x.dueReminded = x.due; putDoc_(d.path, x); changed = true;
+      }
+
       // 3b) paper deadlines: 14, 7 and 2 days before (from 9 AM), while the paper is still a draft
       if (hour >= DUE_REMINDER_HOUR && segs.length === 4 && segs[2] === "papers" && (segs[0] === "students" || segs[0] === "supervisor") && x.deadline && isDraft_(x.status) && /^\d{4}-\d{2}-\d{2}$/.test(x.deadline) && x.deadline >= today) {
         const left = leaveDays_(today, x.deadline) - 1, done = x.dlReminded || [];
@@ -655,7 +669,8 @@ function readActivity_(u) {
   for (let i = v.length - 1; i >= 0 && out.length < 60; i--) {
     const r = v[i], e = { ts: Number(r[0]), actor: String(r[1]), actorName: String(r[2]), role: String(r[3]), student: String(r[4]), scope: String(r[5]), tab: String(r[6]), text: String(r[7]) };
     if (!e.ts || e.actor === u.login) continue;
-    if (u.role === "supervisor" || e.scope === "all" || (e.scope === "group" ? isMember_(e.student, myKey) : e.student === myKey)) out.push(e);
+    const rv = e.scope === "review" ? getDoc_("reviews/" + e.student) : null;
+    if (u.role === "supervisor" || e.scope === "all" || (e.scope === "group" ? isMember_(e.student, myKey) : e.scope === "review" ? !!rv && (rv.reviewer === myKey || rv.owner === myKey) : e.student === myKey)) out.push(e);
   }
   return out;
 }
@@ -680,6 +695,12 @@ function logChange_(u, op, segs, before, after) {
       return;
     }
     if (segs[2] === "messages" && op === "add") return logActivity_(Object.assign(base, { text: who + " in " + gname + ": " + msgPreview_(ex) }));
+    return;
+  }
+  if (segs[0] === "reviews" && segs.length === 2) {
+    if (op === "add") { const p = ex.paperTitle ? "“" + ex.paperTitle + "”" : "a paper";
+      logActivity_(Object.assign(base, { scope: "review", student: segs[1], tab: "reviews", text: "Review assigned: " + reviewerName_(ex.reviewer) + " to review " + p + " by " + ownerName_(ex.owner) + (ex.due ? " (due " + ex.due + ")" : "") }));
+      safely_(() => { const to = studentEmail_(ex.reviewer); if (to) sendMail_(to, "Please review: " + ex.paperTitle, studentName_(ex.reviewer), ["Your supervisor asked you to review " + p + " by " + ownerName_(ex.owner) + (ex.due ? ", by " + niceWhen_(ex.due) : "") + "."].concat(ex.note ? ["Note from your supervisor:\n" + ex.note] : [], ["Open the Reviews tab on the site to read the paper and write your comments."]), STUDENT_LINK_()); }); }
     return;
   }
   if (segs[0] === "supervisor" && segs[2] === "papers" && segs.length === 4) {   // the supervisor's own paper: tell its lab co-authors
@@ -979,4 +1000,70 @@ function buildIcs_(u) {
   ev.forEach(lines => { out.push("BEGIN:VEVENT", "DTSTAMP:" + stamp); lines.forEach(l => out.push(icsFold_(l))); out.push("END:VEVENT"); });
   out.push("END:VCALENDAR");
   return out.join("\r\n") + "\r\n";
+}
+
+
+/* ================================================================ internal paper review
+ *  reviews/<id>: { paperPath, paperTitle, owner (student key or "__sup"), reviewer (student key), due, note,
+ *                  status "Assigned" | "Done", verdict, comments: [{ text, at, by, byRole, byName }] }
+ *  Only the supervisor assigns or removes reviewers (any number per paper). The reviewer, the paper's author and
+ *  the supervisor see the review and can comment; the reviewer (or supervisor) submits it with a verdict.
+ *  Each review is its own thread: two reviewers of one paper don't see each other's reviews.
+ */
+const REVIEW_VERDICTS = ["Ready to submit", "Minor changes", "Major changes"];
+function isReviewer_(path, key) { return loadDocs_().list.some(d => d.path.indexOf("reviews/") === 0 && d.data && d.data.paperPath === path && d.data.reviewer === key); }
+function ownerName_(owner) { if (owner === "__sup") { const s = users_().filter(x => x.role === "supervisor")[0]; return s ? s.name || "the supervisor" : "the supervisor"; } return studentName_(owner); }
+function reviewerName_(k) { return studentName_(k); }
+function checkReview_(d, cur) {
+  const pp = String(d.paperPath || (cur && cur.paperPath) || ""), g = pp.split("/");
+  const paper = getDoc_(pp);
+  if (!paper || g.length !== 4 || g[2] !== "papers" || (g[0] !== "students" && g[0] !== "supervisor")) fail_("invalid-argument", "That paper no longer exists.");
+  const owner = g[0] === "supervisor" ? "__sup" : g[1], reviewer = String(d.reviewer || (cur && cur.reviewer) || "");
+  if (!getDoc_("students/" + reviewer)) fail_("invalid-argument", "Choose a student from the lab as the reviewer.");
+  if (reviewer === owner) fail_("invalid-argument", "The author can't review their own paper.");
+  if (!cur && loadDocs_().list.some(x => x.path.indexOf("reviews/") === 0 && x.data.paperPath === pp && x.data.reviewer === reviewer)) fail_("already-exists", studentName_(reviewer) + " is already reviewing this paper.");
+  const due = /^\d{4}-\d{2}-\d{2}$/.test(String(d.due || "")) ? d.due : "";
+  const out = { paperPath: pp, paperTitle: String(paper.title || "").slice(0, 300), owner: owner, reviewer: reviewer, due: due, note: String(d.note || "").slice(0, 1000),
+    status: cur ? cur.status : "Assigned", verdict: cur ? cur.verdict || "" : "", doneOn: cur ? cur.doneOn || "" : "", comments: cur ? cur.comments || [] : [],
+    assignedOn: cur ? cur.assignedOn : istToday_(), createdAt: cur ? cur.createdAt : Date.now() };
+  if (cur && cur.dueReminded) out.dueReminded = cur.dueReminded;
+  return out;
+}
+function reviewFor_(u, id) {
+  const path = "reviews/" + String(id || "").replace(/[^A-Za-z0-9_.\-]/g, ""), r = getDoc_(path);
+  if (!r) fail_("not-found", "This review no longer exists.");
+  const k = u.role === "supervisor" ? null : u.login.slice(8);
+  if (k && r.reviewer !== k && r.owner !== k) fail_("permission-denied", "You aren't part of this review.");
+  return { path: path, r: r, k: k };
+}
+function reviewComment_(u, req) {
+  const x = reviewFor_(u, req.id), text = String(req.text || "").trim();
+  if (!text) fail_("invalid-argument", "Write a comment first.");
+  if (text.length > 6000) fail_("invalid-argument", "Keep a comment under 6000 characters; split it into two if needed.");
+  const who = u.role === "supervisor" ? "Supervisor" : (u.name || "Student");
+  x.r.comments = (x.r.comments || []).concat({ text: text, at: Date.now(), by: u.login, byRole: u.role, byName: who });
+  putDoc_(x.path, x.r); const rev = bumpRev_();
+  safely_(() => logActivity_({ actor: u.login, actorName: who, role: u.role, student: x.path.slice(8), scope: "review", tab: "reviews",
+    text: who + " commented on the review of “" + x.r.paperTitle + "”: " + (text.length > 120 ? text.slice(0, 120) + "…" : text) }));
+  return { rev: rev };
+}
+function reviewStatus_(u, req) {
+  const x = reviewFor_(u, req.id);
+  if (u.role !== "supervisor" && x.r.reviewer !== x.k) fail_("permission-denied", "Only the reviewer or the supervisor can submit this review.");
+  const who = u.role === "supervisor" ? "Supervisor" : (u.name || "Student");
+  if (req.done) {
+    const verdict = REVIEW_VERDICTS.indexOf(req.verdict) >= 0 ? req.verdict : "";
+    if (!verdict) fail_("invalid-argument", "Choose a verdict: " + REVIEW_VERDICTS.join(", ") + ".");
+    if (!(x.r.comments || []).some(c => c.by === u.login) && u.role !== "supervisor") fail_("invalid-argument", "Write at least one comment before submitting the review.");
+    x.r.status = "Done"; x.r.verdict = verdict; x.r.doneOn = istToday_();
+  } else { x.r.status = "Assigned"; x.r.doneOn = ""; }
+  putDoc_(x.path, x.r); const rev = bumpRev_();
+  safely_(() => logActivity_({ actor: u.login, actorName: who, role: u.role, student: x.path.slice(8), scope: "review", tab: "reviews",
+    text: req.done ? reviewerName_(x.r.reviewer) + " finished reviewing “" + x.r.paperTitle + "”: " + x.r.verdict : "Review of “" + x.r.paperTitle + "” reopened" }));
+  if (req.done) safely_(() => {
+    const lines = [reviewerName_(x.r.reviewer) + " finished reviewing “" + x.r.paperTitle + "”.", "Verdict: " + x.r.verdict, "Read the comments on the site's Reviews tab."];
+    if (x.r.owner !== "__sup") sendMail_(studentEmail_(x.r.owner), "Review done: " + x.r.paperTitle, studentName_(x.r.owner), lines, STUDENT_LINK_());
+    sendMail_(supervisorEmail_(), "Review done: " + x.r.paperTitle, "Supervisor", lines, SUP_LINK_());
+  });
+  return { rev: rev };
 }
