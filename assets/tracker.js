@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl } from "./core.js?v=20261122-1500";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl } from "./core.js?v=20261122-1515";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -152,6 +152,7 @@ function renderStats() {
     stat(pendingLeaves().length, "Leave requests", pendingLeaves().length));
 }
 function renderRoster() {
+  const ae = document.activeElement; if (ae && ae.id === "studentPick") return;   // the drop-down is open: don't close it under the user
   const items = [h("button", { class: "r-item", type: "button", "aria-current": S.sel === null ? "true" : "false", onclick: () => select(null) },
     h("span", { class: "nm", text: "Group overview" }), h("span", { class: "meta", text: "All tasks and recent meetings" })),
     h("button", { class: "r-item r-mine", type: "button", "aria-current": S.sel === "__mine" ? "true" : "false", onclick: () => select("__mine") },
@@ -163,27 +164,25 @@ function renderRoster() {
     h("button", { class: "r-item r-msg", type: "button", "aria-current": S.sel === "__msgs" || String(S.sel).startsWith("__g:") ? "true" : "false", onclick: () => select("__msgs") },
       h("span", { class: "nm" }, "Messages", allUnread() ? h("span", { class: "chip msg", style: "margin-left:8px", text: String(allUnread()) }) : null),
       h("span", { class: "meta", text: (() => { const n = S.students.filter(x => unreadOf(x.id).length).length + groupsMine().filter(g => gUnread(g.id)).length; return n ? "Unread in " + plural(n, "conversation") : groupsMine().length ? plural(groupsMine().length, "group") + " · private conversations" : "Groups and private conversations"; })() })),
-    h("div", { class: "roster-sep label", text: "Students" })];
-  const q = (S.rosterQ || "").trim().toLowerCase();
-  const found = S.students.filter(s => !q || (s.name || "").toLowerCase().includes(q) || (s.admissionNo || s.id).toLowerCase().includes(q));
-  const search = document.getElementById("rosterSearch");
-  if (search) { search.hidden = S.students.length < 5; if (search.hidden && q) S.rosterQ = ""; }
-  if (q && !found.length) items.push(h("p", { class: "note", style: "padding:4px 12px", text: "No student matches “" + S.rosterQ.trim() + "”." }));
-  for (const [course, list] of byCourse(found)) {
-  items.push(h("div", { class: "course-head" }, h("span", { text: course }), h("span", { class: "mono", text: String(list.length) })));
-  for (const s of list) {
-    const l = lastMeeting(s.id), mine = tasksOf(s.id), open = mine.filter(t => !isDone(t)), od = open.filter(isOverdue).length;
-    items.push(h("button", { class: "r-item", type: "button", "aria-current": S.sel === s.id ? "true" : "false", onclick: () => select(s.id) },
-      h("span", { class: "nm", text: s.name }),
-      h("span", { class: "meta", text: s.admissionNo || "" }),
-      h("span", { class: "meta" },
-        h("span", { text: l ? "Met " + (diff(l, todayStr()) === 0 ? "today" : diff(l, todayStr()) + "d ago") : "No meetings yet" }),
-        h("span", { text: open.length + " open · " + (mine.length - open.length) + " done" }),
-        od ? h("span", { class: "chip bad", text: od + " overdue" }) : null,
-        pendingLeaves(s.id).length ? h("span", { class: "chip warn", text: "Leave request" }) : null,
-        unreadOf(s.id).length ? h("span", { class: "chip msg", text: plural(unreadOf(s.id).length, "new message") }) : null)));
-  }
-  }
+  ];
+  // Students: one drop-down (grouped by course) instead of a long list; alerts are written into each option.
+  const flags = s => {
+    const od = tasksOf(s.id).filter(t => !isDone(t) && isOverdue(t)).length, lv = pendingLeaves(s.id).length, un = unreadOf(s.id).length;
+    return [od ? od + " overdue" : "", lv ? "leave request" : "", un ? plural(un, "new message") : ""].filter(Boolean);
+  };
+  const isStudent = S.students.some(x => x.id === S.sel);
+  const pick = h("select", { id: "studentPick", class: "student-pick" + (isStudent ? " active" : ""), "aria-label": "Open a student's page",
+      onchange: e => { if (e.target.value) select(e.target.value); } },
+    h("option", { value: "", text: S.students.length ? "Choose a student… (" + S.students.length + ")" : "No students yet" }),
+    ...byCourse(S.students).map(([course, list]) => h("optgroup", { label: course + " (" + list.length + ")" },
+      list.map(x => h("option", { value: x.id, text: [x.name + (x.admissionNo ? " · " + x.admissionNo : ""), ...flags(x)].join(" · ") })))));
+  pick.value = isStudent ? S.sel : "";
+  items.push(h("label", { class: "roster-pick" }, h("span", { class: "label", text: "Students" }), pick));
+  // A short "needs attention" strip, so overdue tasks, leave requests and unread messages stay visible
+  const attn = S.students.filter(x => flags(x).length).sort((a, b) => a.name.localeCompare(b.name));
+  if (attn.length) items.push(h("div", { class: "attn" }, h("span", { class: "label", text: "Needs attention" }),
+    ...attn.map(x => h("button", { type: "button", class: "attn-item" + (S.sel === x.id ? " on" : ""), onclick: () => select(x.id) },
+      h("span", { class: "nm", text: x.name }), h("span", { class: "meta", text: flags(x).join(" · ") })))));
   document.getElementById("roster").replaceChildren(...items);
 }
 
@@ -1934,14 +1933,6 @@ export async function start(pageRole) {
     if (list && !typing) refreshConfs();
     if (S.isOwner) renderRoster();
   }, () => {});
-  const rs = document.getElementById("rosterSearch");
-  if (rs) {
-    rs.addEventListener("input", () => { S.rosterQ = rs.value; renderRoster(); });
-    rs.addEventListener("keydown", e => {
-      if (e.key === "Escape") { rs.value = ""; S.rosterQ = ""; renderRoster(); }
-      if (e.key === "Enter") { const q = rs.value.trim().toLowerCase(); const s = S.students.find(x => (x.name || "").toLowerCase().includes(q) || (x.admissionNo || x.id).toLowerCase().includes(q)); if (q && s) select(s.id); }
-    });
-  }
   if (sup) {
     db.doc("private/join").onSnapshot(snap => { document.getElementById("joinShow").textContent = snap.exists && snap.data().code ? snap.data().code : "Not set"; },
       () => { document.getElementById("joinShow").textContent = "Can't read"; });

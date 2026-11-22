@@ -587,3 +587,14 @@ li.reading.is-read .ref-title { color: var(--muted); }
 .panel.sec-msg.drop { outline: 2px dashed var(--msg-ink); outline-offset: -6px; }
 /* ---------- student search in the left column ---------- */
 .roster-search { width: 100%; margin: 4px 0 10px; }
+
+/* ---------- student drop-down in the left column ---------- */
+.roster-pick { display: grid; gap: 6px; margin: 14px 0 4px; padding: 0 2px; }
+.student-pick { width: 100%; font-weight: 500; }
+.student-pick.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.attn { display: grid; gap: 4px; margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.attn .label { margin-bottom: 2px; }
+.attn-item { display: grid; gap: 1px; text-align: left; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--ink); cursor: pointer; font: inherit; }
+.attn-item:hover, .attn-item:focus-visible, .attn-item.on { background: var(--sunk); outline: none; }
+.attn-item .nm { font-weight: 500; font-size: 0.9rem; }
+.attn-item .meta { font-size: 0.78rem; color: var(--bad); }

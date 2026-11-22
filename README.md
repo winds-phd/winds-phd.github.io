@@ -86,7 +86,7 @@ When adding or editing a paper there are two co-author fields:
 ## Smaller conveniences
 - The site remembers the page, tab and conversation you last had open (per browser).
 - Unsent message text is kept per conversation while you move around the site.
-- With 5 or more students, a search box in the left column finds a student by name or admission number; Enter opens the first match, Esc clears it.
+- **Students drop-down:** in the left column, students are in one drop-down grouped by course (PhD / Masters / B-Tech), each showing alerts such as "1 overdue", "leave request" or "2 new messages". You can type the first letters of a name while it's open to jump to it. Below it, **Needs attention** lists only the students with something overdue, a pending leave request or unread messages; click a name to open that student.
 - On phones, opening a student or page scrolls straight to it.
 
 ## Group messages
