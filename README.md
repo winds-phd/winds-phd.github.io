@@ -77,6 +77,21 @@ When adding or editing a paper there are two co-author fields:
 - Optional **Full author list in order** if the exact order matters; otherwise the names above are used.
 - Only the student who added the paper and the supervisor can change it; co-authors see it read-only. On the overview, each paper is listed once, with "with <co-authors>" under the student's name.
 
+## Paper deadlines
+- On any paper's form (add or edit): **Submission deadline** and **What's due** (e.g. "INFOCOM 2027 full paper"). **Fill from Upcoming conferences** copies a conference's name and deadline in one step; journal or special-issue deadlines can be typed.
+- While the paper is a **draft**, its card shows a countdown ("Deadline 29 Nov · 7 days left", amber at 14 days, red at 7).
+- Reminders go out **14, 7 and 2 days before** (from 9 AM), by email to the student and you (only you for your own papers) and in the bell. Each one is sent once. Changing the deadline starts the reminders again for the new date. Reminders stop once the paper is marked Submitted. They need the email timer from `setupNotifications`.
+
+## Export publications
+- **Supervisor → My papers** (all lab papers) and each student's **Publications** have **Export publications** at the bottom.
+- Tick which stages to include (Drafts, Submitted / under review, Accepted / published), then **Download BibTeX (.bib)**, **Download list (.txt)** in IEEE style, or **Copy list**. Drafts are marked "in preparation" and submitted papers "under review". If "Full author list in order" is filled, that order is used; otherwise the owner, lab co-authors, then outside co-authors.
+
+## Calendar feed (Google Calendar, iPhone, Outlook)
+- **Supervisor → Meetings** and each student's **Meetings** tab have **Add to your calendar → Get my calendar link**. Subscribe to the link once; it updates by itself (Google refreshes every few hours).
+- **Supervisor feed:** all scheduled meetings (repeats and cancelled dates included), your tasks and reminders, tasks you took on for students, every draft paper's deadline, conference deadlines and students' approved leave.
+- **Student feed:** their meetings, own task due dates, deadlines of their papers and co-authored papers, conference deadlines and their approved leave.
+- The link is private. **Make a new link** switches the old one off if it was ever shared by mistake.
+
 ## Attachments in messages (images and PDFs)
 - In any private or group conversation, click 📎, **paste** an image (Ctrl/Cmd+V), or **drag and drop** files onto the conversation. Up to 5 files per message, 5 MB each. Large phone photos are reduced automatically before upload. Only JPG, PNG, GIF, WebP and PDF are accepted.
 - Images show inside the conversation; click one to open it full size. PDFs show as a card; click to open it.

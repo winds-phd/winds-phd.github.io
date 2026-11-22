@@ -67,7 +67,14 @@ function ensureSheet_(ss, name, header) {
 
 /* ================================================================ web app entry points */
 
-function doGet() {
+function doGet(e) {
+  const cal = e && e.parameter && e.parameter.cal;
+  if (cal) {   // a personal calendar feed (Google Calendar / iPhone / Outlook subscribe to this link)
+    const login = PropertiesService.getScriptProperties().getProperty("CAL_" + String(cal).replace(/[^A-Za-z0-9]/g, ""));
+    const u = login ? findUser_(login) : null;
+    if (!u) return ContentService.createTextOutput("This calendar link is no longer valid. Get a new one on the site.");
+    return ContentService.createTextOutput(buildIcs_(u)).setMimeType(ContentService.MimeType.ICAL);
+  }
   return ContentService.createTextOutput("WiNDS Lab Research Tracking backend is running. Open the website to use it.");
 }
 
@@ -203,6 +210,7 @@ function dispatch_(action, req) {
     }
 
     case "upload": return uploadFile_(requireUser_(req), req);
+    case "calFeed": return calFeed_(requireUser_(req), !!req.reset);
     case "file": return getFile_(requireUser_(req), req);
 
     case "sync": {
@@ -586,6 +594,22 @@ function sendScheduledEmails() {
         }
       }
 
+      // 3b) paper deadlines: 14, 7 and 2 days before (from 9 AM), while the paper is still a draft
+      if (hour >= DUE_REMINDER_HOUR && segs.length === 4 && segs[2] === "papers" && (segs[0] === "students" || segs[0] === "supervisor") && x.deadline && isDraft_(x.status) && /^\d{4}-\d{2}-\d{2}$/.test(x.deadline) && x.deadline >= today) {
+        const left = leaveDays_(today, x.deadline) - 1, done = x.dlReminded || [];
+        const due = [14, 7, 2].filter(t => left <= t && done.indexOf(x.deadline + ":" + t) < 0);
+        if (due.length) {
+          const what = "“" + x.title + "”" + (x.deadlineNote ? " (" + x.deadlineNote + ")" : "");
+          const when = left === 0 ? "today" : left === 1 ? "tomorrow" : "in " + left + " days";
+          const lines = ["Deadline " + when + ": " + what + ", on " + niceWhen_(x.deadline) + ".", "The paper is still marked as a draft. Update its status on the site once it's submitted."];
+          const owner = segs[0] === "students" ? segs[1] : "";
+          if (owner && sendMail_(studentEmail_(owner), "Paper deadline " + when + ": " + x.title, studentName_(owner), lines, STUDENT_LINK_())) sent++;
+          if (sendMail_(sup, "Paper deadline " + when + ": " + x.title, "Supervisor", (owner ? [studentName_(owner) + "'s paper."] : []).concat(lines), SUP_LINK_())) sent++;
+          safely_(() => logActivity_({ actor: "system", actorName: "Reminder", role: "system", student: owner, scope: "student", tab: "papers", text: "Paper deadline " + when + ": " + what }));
+          x.dlReminded = done.concat(due.map(t => x.deadline + ":" + t)).slice(-12); putDoc_(d.path, x); changed = true;
+        }
+      }
+
       // 3) one reminder the day before a task is due (from 9 AM), to whoever the task belongs to
       if (hour >= DUE_REMINDER_HOUR) {
         if (segs[0] === "students" && segs[2] === "tasks" && x.due === tomorrow && x.status !== "Done" && x.dueReminded !== x.due) {
@@ -895,4 +919,64 @@ function msgPreview_(m) {
   const att = files.length ? "📎 " + (files.length === 1 ? files[0].name : files.length + " files") : "";
   const s = t ? (t.length > 140 ? t.slice(0, 140) + "…" : t) + (att ? " (" + att + ")" : "") : att;
   return s || "(empty message)";
+}
+
+
+/* ================================================================ paper deadlines and calendar feeds */
+function isDraft_(st) { return !st || ["Currently writing", "Idea", "Drafting", "Internal review"].indexOf(st) >= 0; }
+
+/** Each person gets a private, unguessable feed link; "reset" makes a new one and the old link stops working. */
+function calFeed_(u, reset) {
+  const props = PropertiesService.getScriptProperties();
+  let key = props.getProperty("CALKEY_" + u.login);
+  if (key && reset) { props.deleteProperty("CAL_" + key); key = null; }
+  if (!key) { key = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ""); props.setProperty("CAL_" + key, u.login); props.setProperty("CALKEY_" + u.login, key); }
+  return { key: key };
+}
+function icsEsc_(t) { return String(t || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n"); }
+function icsFold_(line) { let out = "", rest = line; while (rest.length > 74) { out += rest.slice(0, 74) + "\r\n "; rest = rest.slice(74); } return out + rest; }
+function icsUtc_(date, time) { return Utilities.formatDate(istDate_(date, time), "UTC", "yyyyMMdd'T'HHmmss'Z'"); }
+function icsDay_(date) { return String(date).replace(/-/g, ""); }
+function buildIcs_(u) {
+  const sup = u.role === "supervisor", me = sup ? null : u.login.slice(8), ev = [], seen = {};
+  const stamp = Utilities.formatDate(new Date(), "UTC", "yyyyMMdd'T'HHmmss'Z'");
+  const allDay = (uid, from, to, title, desc) => ev.push(["UID:" + uid + "@winds", "DTSTART;VALUE=DATE:" + icsDay_(from), "DTEND;VALUE=DATE:" + icsDay_(addDaysStr_(to || from, 1)), "SUMMARY:" + icsEsc_(title)].concat(desc ? ["DESCRIPTION:" + icsEsc_(desc)] : []));
+  for (const d of loadDocs_().list) {
+    const g = d.path.split("/"), x = d.data || {};
+    // meetings (one event per series; repeats become RRULE, cancelled dates EXDATE)
+    if (g[0] === "students" && g[2] === "schedule" && g.length === 4 && x.date && x.time && (sup || g[1] === me)) {
+      const id = x.groupId || d.path; if (seen[id]) continue; seen[id] = 1;
+      const who = x.kind === "group" ? "Group meeting" + (x.audience ? " (" + x.audience + ")" : "") : sup ? "Meeting with " + studentName_(g[1]) : "Meeting with supervisor";
+      const lines = ["UID:" + id + "@winds", "DTSTART:" + icsUtc_(x.date, x.time), "DTEND:" + Utilities.formatDate(new Date(istDate_(x.date, x.time).getTime() + 3600000), "UTC", "yyyyMMdd'T'HHmmss'Z'"), "SUMMARY:" + icsEsc_(who)];
+      if (x.repeat && x.repeat !== "none") {
+        lines.push("RRULE:FREQ=" + (x.repeat === "monthly" ? "MONTHLY" : "WEEKLY") + (x.repeat === "biweekly" ? ";INTERVAL=2" : "") + (x.until ? ";UNTIL=" + icsUtc_(x.until, "23:59") : ""));
+        (x.skip || []).forEach(k => lines.push("EXDATE:" + icsUtc_(k, x.time)));
+      }
+      if (x.agenda || x.link) lines.push("DESCRIPTION:" + icsEsc_((x.agenda || "") + (x.link ? "\nJoin: " + x.link : "")));
+      if (x.location || x.link) lines.push("LOCATION:" + icsEsc_(x.location || x.link));
+      if (x.link) lines.push("URL:" + x.link);
+      ev.push(lines);
+    }
+    // task due dates: a student's own open tasks; for the supervisor, tasks they took on for a student
+    if (g[0] === "students" && g[2] === "tasks" && g.length === 4 && x.due && x.status !== "Done" && (sup ? x.owner === "supervisor" : g[1] === me && x.owner !== "supervisor"))
+      allDay(d.path.replace(/\//g, "-"), x.due, null, "Due: " + x.title + (sup ? " (for " + studentName_(g[1]) + ")" : ""), x.notes || "");
+    // paper deadlines (drafts only)
+    if (g.length === 4 && g[2] === "papers" && x.deadline && isDraft_(x.status) && (sup || (g[0] === "students" && g[1] === me) || (x.coauthors || []).indexOf(me) >= 0))
+      allDay(d.path.replace(/\//g, "-") + "-dl", x.deadline, null, "Paper deadline: " + x.title + (x.deadlineNote ? " (" + x.deadlineNote + ")" : ""), (g[0] === "students" ? "Paper by " + studentName_(g[1]) + ". " : "") + (x.venue ? "Target: " + x.venue : ""));
+    // shared conference deadlines
+    if (g[0] === "conferences" && g.length === 2 && x.deadline) allDay("conf-" + g[1], x.deadline, null, "Conference deadline: " + x.name, x.url || "");
+    // approved leave
+    if (g[0] === "students" && g[2] === "leaves" && g.length === 4 && x.status === "Approved" && x.from && (sup || g[1] === me))
+      allDay(d.path.replace(/\//g, "-"), x.from, x.to, sup ? "Leave: " + studentName_(g[1]) : "On leave", x.reason || "");
+    // the supervisor's own tasks and reminders
+    if (sup && g[0] === "supervisor" && g[2] === "items" && g.length === 4 && x.date && !x.done) {
+      if (x.time) ev.push(["UID:" + d.path.replace(/\//g, "-") + "@winds", "DTSTART:" + icsUtc_(x.date, x.time), "DTEND:" + Utilities.formatDate(new Date(istDate_(x.date, x.time).getTime() + 1800000), "UTC", "yyyyMMdd'T'HHmmss'Z'"), "SUMMARY:" + icsEsc_(x.title)].concat(x.link || x.location ? ["LOCATION:" + icsEsc_(x.location || x.link)] : []));
+      else allDay(d.path.replace(/\//g, "-"), x.date, null, (x.kind === "task" ? "To do: " : "") + x.title, x.notes || "");
+    }
+  }
+  const out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//WiNDS Lab Research Tracking//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+    "X-WR-CALNAME:" + icsEsc_(sup ? "WiNDS Lab (supervisor)" : "WiNDS Lab · " + (u.name || "me")), "X-WR-TIMEZONE:Asia/Kolkata", "REFRESH-INTERVAL;VALUE=DURATION:PT6H", "X-PUBLISHED-TTL:PT6H"];
+  ev.forEach(lines => { out.push("BEGIN:VEVENT", "DTSTAMP:" + stamp); lines.forEach(l => out.push(icsFold_(l))); out.push("END:VEVENT"); });
+  out.push("END:VCALENDAR");
+  return out.join("\r\n") + "\r\n";
 }

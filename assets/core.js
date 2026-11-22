@@ -1,6 +1,6 @@
 // Talks to the Google Apps Script backend (data lives in a Google Sheet in the supervisor's Drive).
 // Provides sign-in helpers and a small live data layer used by every page.
-import { API_URL } from "./config.js?v=20261122-1515";
+import { API_URL } from "./config.js?v=20261122-1600";
 
 export const configured = !String(API_URL).startsWith("PASTE_") && /^https:\/\//.test(API_URL);
 const TOKEN_KEY = "phdlog.token";
@@ -50,6 +50,9 @@ const activityFns = new Set();
 let lab = [];
 /** Everyone registered in the lab: [{ key, name, course }] (names only, for picking co-authors). */
 export function labMembers() { return lab; }
+
+/** Your personal calendar feed link (subscribe to it in Google Calendar, iPhone or Outlook). reset = make a new link. */
+export async function calendarFeed(reset) { const j = await call("calFeed", { reset: !!reset }); return API_URL + "?cal=" + j.key; }
 
 /* ---------- message attachments ---------- */
 function toBase64(file) {

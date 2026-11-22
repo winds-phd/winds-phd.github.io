@@ -598,3 +598,16 @@ li.reading.is-read .ref-title { color: var(--muted); }
 .attn-item:hover, .attn-item:focus-visible, .attn-item.on { background: var(--sunk); outline: none; }
 .attn-item .nm { font-weight: 500; font-size: 0.9rem; }
 .attn-item .meta { font-size: 0.78rem; color: var(--bad); }
+
+/* ---------- deadlines, export, calendar ---------- */
+.dl-fields { display: grid; gap: 8px; }
+.dl-fill select { width: auto; max-width: 100%; }
+.dl-fields .note { margin: 0; }
+.export-box { margin-top: 12px; }
+.export-body { display: grid; gap: 10px; margin-top: 10px; }
+.export-checks { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.cal-panel { margin-top: 20px; }
+.cal-out { display: grid; gap: 10px; }
+.cal-link { display: flex; gap: 8px; }
+.cal-link input { flex: 1; min-width: 0; font-size: 0.82rem; }
+.cal-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 0.9rem; }

@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl } from "./core.js?v=20261122-1515";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl, calendarFeed } from "./core.js?v=20261122-1600";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -709,6 +709,117 @@ function refreshGroupPage(g) {
   chatT = groupThread(g); refreshChat();
 }
 
+
+/* ---------- paper deadlines ---------- */
+function deadlineFields(prefix, p) {
+  const confs = (S.confs || []).filter(c => c.deadline && c.deadline >= todayStr()).sort((a, b) => a.deadline.localeCompare(b.deadline));
+  const fill = confs.length ? h("select", { "aria-label": "Fill the deadline from a conference", onchange: e => {
+      const c = confs.find(x => x.id === e.target.value); if (!c) return;
+      document.getElementById(prefix + "deadline").value = c.deadline;
+      if (!val(prefix + "dlnote")) document.getElementById(prefix + "dlnote").value = c.name;
+      const v = document.getElementById(prefix + "venue"); if (v && !v.value) v.value = c.name;
+      e.target.value = ""; e.target.dispatchEvent(new Event("input", { bubbles: true }));
+    } }, h("option", { value: "", text: "Fill from Upcoming conferences…" }), ...confs.map(c => h("option", { value: c.id, text: c.name + " · " + fmtD(c.deadline) }))) : null;
+  return h("div", { class: "dl-fields" },
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "Submission deadline (optional)", h("input", { id: prefix + "deadline", type: "date", value: p && p.deadline || "" })),
+      h("label", { class: "fieldlabel" }, "What's due (optional)", h("input", { id: prefix + "dlnote", maxlength: "120", value: p && p.deadlineNote || "", placeholder: "e.g. INFOCOM 2027 full paper · special issue on 6G" }))),
+    fill ? h("div", { class: "dl-fill" }, fill) : null,
+    h("p", { class: "note", text: "While the paper is a draft, reminders go to the student and the supervisor 14, 7 and 2 days before (email and bell), and the deadline shows in calendar feeds." }));
+}
+function deadlineChip(p) {
+  if (!p.deadline || pStatus(p) !== "Currently writing") return null;
+  const left = diff(todayStr(), p.deadline);
+  const text = left < 0 ? "Deadline passed (" + fmtD(p.deadline) + ")" : left === 0 ? "Deadline today" : left === 1 ? "Deadline tomorrow" : "Deadline " + fmtD(p.deadline) + " · " + left + " days left";
+  return h("span", { class: "chip " + (left <= 7 ? "bad" : left <= 14 ? "warn" : "plain"), title: p.deadlineNote || "", text });
+}
+
+/* ---------- export publications: BibTeX or a formatted list ---------- */
+const EXPORT_STAGES = [["draft", "Drafts", s => s === "Currently writing"], ["review", "Submitted / under review", s => ["Submitted", "Under review", "Revision"].includes(s)], ["accepted", "Accepted / published", s => ["Accepted", "Published"].includes(s)]];
+function authorNames(p) {
+  const strip = n => String(n || "").replace(/\s*\(.*?\)\s*/g, " ").replace(/^(dr|prof)\.?\s+/i, "").trim();
+  const raw = p.authors ? p.authors.split(/\s*(?:,|;|\band\b)\s*/i) : [ownerOf(p), ...(p.coauthors || []).map(nameOf), ...(p.externalAuthors || "").split(/\s*[,;]\s*/)];
+  return raw.map(strip).filter(Boolean).filter((n, i, a) => a.indexOf(n) === i);
+}
+function initialsName(n) { const w = n.split(/\s+/); return w.length < 2 ? n : w.slice(0, -1).map(x => x[0].toUpperCase() + ".").join(" ") + " " + w[w.length - 1]; }
+function paperYear(p) { const d = p.publishedOn || p.acceptedOn || p.submittedOn || p.statusSince || (p.createdAt ? localDate(p.createdAt) : ""); return String(d).slice(0, 4) || String(new Date().getFullYear()); }
+function bibEsc(t) { return String(t || "").replace(/[{}\\]/g, "").replace(/([&%$#_])/g, "\\$1"); }
+function bibtex(list) {
+  const used = {};
+  return list.map(p => {
+    const names = authorNames(p), year = paperYear(p), st = pStatus(p);
+    const last = (names[0] || "anon").split(/\s+/).pop().toLowerCase().replace(/[^a-z]/g, "") || "anon";
+    let key = last + year + ((p.title || "").toLowerCase().match(/[a-z]{4,}/) || ["paper"])[0]; used[key] = (used[key] || 0) + 1; if (used[key] > 1) key += String.fromCharCode(95 + used[key]);
+    const type = p.type === "Conference paper" ? "inproceedings" : p.type === "Book chapter" ? "incollection" : p.type === "Preprint" || p.type === "Patent" ? "misc" : "article";
+    const f = [["title", "{" + bibEsc(p.title) + "}"], ["author", names.map(bibEsc).join(" and ")], ["year", year]];
+    if (p.venue) f.push([type === "inproceedings" || type === "incollection" ? "booktitle" : type === "article" ? "journal" : "howpublished", bibEsc(p.venue)]);
+    if (p.doi) f.push(["doi", bibEsc(p.doi)]);
+    if (st !== "Accepted" && st !== "Published") f.push(["note", st === "Currently writing" ? "In preparation" : "Under review"]);
+    return "@" + type + "{" + key + ",\n" + f.map(([k, v]) => "  " + k + " = {" + v.replace(/^\{(.*)\}$/, "{$1}") + "}").join(",\n") + "\n}";
+  }).join("\n\n") + "\n";
+}
+function refList(list) {
+  return list.map((p, i) => {
+    const names = authorNames(p).map(initialsName), st = pStatus(p);
+    const au = names.length > 2 ? names.slice(0, -1).join(", ") + ", and " + names[names.length - 1] : names.join(" and ");
+    const tail = st === "Currently writing" ? "in preparation" : ["Accepted"].includes(st) ? "accepted" : st === "Published" ? "" : "under review";
+    return "[" + (i + 1) + "] " + au + ", “" + (p.title || "") + ",” " + (p.venue ? p.venue + ", " : "") + paperYear(p) + (tail ? " (" + tail + ")" : "") + ".";
+  }).join("\n") + "\n";
+}
+function downloadText(name, text, type) {
+  const a = h("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name }); document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+function exportBox(getList, who) {
+  const box = h("details", { class: "sub export-box" }, h("summary", { text: "Export publications (BibTeX or reference list)" }));
+  const checks = EXPORT_STAGES.map(([k, label]) => h("label", { class: "check" }, h("input", { type: "checkbox", value: k, checked: k !== "draft" }), " " + label));
+  const chosen = () => {
+    const on = checks.map(c => c.querySelector("input")).filter(i => i.checked).map(i => i.value);
+    const tests = EXPORT_STAGES.filter(([k]) => on.includes(k)).map(([, , t]) => t);
+    return getList().filter(p => tests.some(t => t(pStatus(p)))).sort((a, b) => paperYear(b).localeCompare(paperYear(a)) || (a.title || "").localeCompare(b.title || ""));
+  };
+  const base = (who || "papers").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-publications";
+  const go = fmt => { const list = chosen(); if (!list.length) { say("No papers match the stages you ticked."); return null; } return list; };
+  box.append(h("div", { class: "export-body" },
+    h("div", { class: "export-checks" }, ...checks),
+    h("div", { class: "row-btns" },
+      h("button", { class: "btn small", type: "button", text: "Download BibTeX (.bib)", onclick: () => { const l = go(); if (l) { downloadText(base + ".bib", bibtex(l), "application/x-bibtex"); say("Downloaded " + plural(l.length, "paper") + " as BibTeX"); } } }),
+      h("button", { class: "btn ghost small", type: "button", text: "Download list (.txt)", onclick: () => { const l = go(); if (l) { downloadText(base + ".txt", refList(l), "text/plain"); say("Downloaded a list of " + plural(l.length, "paper")); } } }),
+      h("button", { class: "btn ghost small", type: "button", text: "Copy list", onclick: async () => { const l = go(); if (!l) return; try { await navigator.clipboard.writeText(refList(l)); say("Copied " + plural(l.length, "reference")); } catch (e) { say("Couldn't copy here. Use Download list instead."); } } })),
+    h("p", { class: "note", text: "The list uses IEEE style, e.g. “P. Sharma and A. Kalita, “Title,” IEEE TMC, 2026.” Drafts are marked “in preparation”." })));
+  return box;
+}
+
+/* ---------- personal calendar feed ---------- */
+function calendarPanel() {
+  const out = h("div", { class: "cal-out", hidden: true });
+  const show = async reset => {
+    btn.disabled = true; btn.textContent = reset ? "Making a new link…" : "Getting your link…";
+    try {
+      const url = await calendarFeed(reset);
+      const input = h("input", { class: "mono", readonly: true, value: url, "aria-label": "Your calendar link", onfocus: e => e.target.select() });
+      let armed = null; const resetBtn = h("button", { class: "btn ghost small", type: "button", text: "Make a new link" });
+      resetBtn.onclick = () => { if (!armed) { resetBtn.textContent = "Confirm: old link stops working"; armed = setTimeout(() => { armed = null; resetBtn.textContent = "Make a new link"; }, 5000); return; } clearTimeout(armed); show(true); };
+      out.replaceChildren(
+        h("div", { class: "cal-link" }, input, h("button", { class: "btn small", type: "button", text: "Copy", onclick: async () => { try { await navigator.clipboard.writeText(url); say("Calendar link copied"); } catch (e) { input.focus(); say("Press Ctrl+C (Cmd+C on Mac) to copy the selected link"); } } })),
+        h("ol", { class: "cal-steps" },
+          h("li", null, h("b", { text: "Google Calendar (computer): " }), "open calendar.google.com → next to “Other calendars” click + → “From URL” → paste the link → Add calendar."),
+          h("li", null, h("b", { text: "iPhone / iPad: " }), "Settings → Calendar → Accounts → Add Account → Other → Add Subscribed Calendar → paste the link."),
+          h("li", null, h("b", { text: "Outlook: " }), "Add calendar → Subscribe from web → paste the link.")),
+        h("p", { class: "note", text: "Keep this link private: anyone with it can see your calendar entries. Google refreshes subscribed calendars every few hours, so new entries can take a while to appear. If the link is ever shared by mistake, make a new one." }),
+        h("div", { class: "row-btns" }, resetBtn));
+      out.hidden = false; btn.hidden = true;
+      if (reset) say("New calendar link made. Subscribe again with it; the old link no longer works.");
+    } catch (e) { say(e.message || "Couldn't get the calendar link."); }
+    finally { btn.disabled = false; btn.textContent = "Get my calendar link"; }
+  };
+  const btn = h("button", { class: "btn", type: "button", text: "Get my calendar link", onclick: () => show(false) });
+  return h("section", { class: "panel sec-meet cal-panel" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Add to your calendar" })),
+    h("p", { class: "note", text: S.isOwner ? "One private link puts all scheduled meetings, your tasks and reminders, tasks you took on for students, paper and conference deadlines and students' approved leave into Google Calendar, iPhone or Outlook. It updates by itself." : "One private link puts your meetings, task due dates, paper and conference deadlines and approved leave into Google Calendar, iPhone or Outlook. It updates by itself." }),
+    btn, out);
+}
+
 /* ---------- publications ---------- */
 /* "__sup" stands for the supervisor's own workspace (their papers and reading list live under supervisor/me/). */
 const SUP = "__sup";
@@ -791,7 +902,7 @@ function paperCard(p) {
     h("summary", null,
       h("div", { style: "min-width:0" },
         h("div", { class: "t-title", text: p.title }),
-        h("div", { class: "t-sub" }, pChip(st), p.studentId !== viewSid() ? h("span", { class: "chip coauth", text: "Co-author" }) : null, h("span", { class: "chip plain", text: p.type || "Journal article" }),
+        h("div", { class: "t-sub" }, pChip(st), deadlineChip(p), p.studentId !== viewSid() ? h("span", { class: "chip coauth", text: "Co-author" }) : null, h("span", { class: "chip plain", text: p.type || "Journal article" }),
           p.venue ? h("span", { class: "p-venue", text: (st === "Currently writing" ? "Target: " : "") + p.venue }) : h("span", { class: "muted", text: st === "Currently writing" ? "Target venue not set" : "Venue not set" }),
           authorLine(p) ? h("span", { class: "who", text: authorLine(p) }) : null),
         latestFeedback(p)),
@@ -845,6 +956,7 @@ function paperFields(prefix, p, ownerSid) {
     h("div", { class: "row" },
       h("label", { class: "fieldlabel" }, "Venue: journal or conference (target, if still writing)", h("input", { id: prefix + "venue", maxlength: "300", value: p.venue || "", placeholder: "e.g. IEEE Transactions on Power Systems" })),
       h("label", { class: "fieldlabel" }, "Type", sel(prefix + "type", PTYPES, p.type))),
+    deadlineFields(prefix, p),
     coauthorPicker(prefix, ownerSid, p.coauthors || []),
     h("label", { class: "fieldlabel" }, "Co-authors outside the lab", h("input", { id: prefix + "external", maxlength: "500", value: p.externalAuthors || "", placeholder: "e.g. R. Gupta (IIT Delhi), M. Chen (NUS)" })),
     h("label", { class: "fieldlabel" }, "Full author list in order (optional, as it appears on the paper)", h("input", { id: prefix + "authors", maxlength: "500", value: p.authors || "", placeholder: "Leave empty to use the names above" })),
@@ -879,7 +991,8 @@ function readPaperFields(prefix) {
   const cb = document.getElementById(prefix + "coauthors");
   return { title: val(prefix + "title").trim(), authors: val(prefix + "authors").trim(), type: val(prefix + "type"),
     coauthors: cb ? JSON.parse(cb.dataset.keys || "[]") : [], externalAuthors: val(prefix + "external").trim(),
-    venue: val(prefix + "venue").trim(), overleaf: cleanUrl(val(prefix + "overleaf")) };
+    venue: val(prefix + "venue").trim(), overleaf: cleanUrl(val(prefix + "overleaf")),
+    deadline: val(prefix + "deadline"), deadlineNote: val(prefix + "dlnote").trim() };
 }
 function paperEditForm(p) {
   const prefix = "pe-" + p.id + "-";
@@ -992,7 +1105,8 @@ function buildStudent(s) {
   const papersPanel = h("section", { class: "panel" },
     h("div", { class: "panel-head" }, h("h3", { text: "Publications" }), h("div", { id: "paper-count" })),
     h("div", { class: "tasks", id: "paper-list" }),
-    S.canWrite ? h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper: currently writing, submitted or accepted" }), h("div", { style: "margin-top:10px" }, paperAddForm(s))) : null);
+    S.canWrite ? h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper: currently writing, submitted or accepted" }), h("div", { style: "margin-top:10px" }, paperAddForm(s))) : null,
+    exportBox(() => papersOf(s.id), s.name));
 
   const refType = h("select", { id: "nr-type", onchange: e => { document.getElementById("nr-venue-label").firstChild.textContent = e.target.value === "Journal" ? "Journal name" : e.target.value === "Conference" ? "Conference name" : "Where it appeared (optional)"; } },
     ["Journal", "Conference", "Other"].map(x => h("option", { value: x, text: x === "Other" ? "Other (preprint, book, thesis…)" : x })));
@@ -1027,7 +1141,7 @@ function buildStudent(s) {
     meetings: h("div", { class: "tabpane", "data-pane": "meetings" },
       h("section", { class: "panel sec-meet" }, h("div", { class: "panel-head" }, h("h3", { text: "Scheduled meetings" }), h("span", { class: "muted", id: "stu-sched-count" })),
         h("ul", { class: "refs", id: "stu-sched" })),
-      h("div", { class: "cols" }, meetPanel, logPanel)),
+      h("div", { class: "cols" }, meetPanel, logPanel), S.canWrite && !S.isOwner ? calendarPanel() : null),
     profile: h("div", { class: "tabpane", "data-pane": "profile" }, profilePanel(s), leavePanel(s)),
     messages: h("div", { class: "tabpane", "data-pane": "messages" }, messagePanel(s)) };
   const tabBtn = (k, l) => h("button", { type: "button", role: "tab", "data-tab": k, class: "tab-" + k, "aria-selected": S.tab === k ? "true" : "false",
@@ -1661,12 +1775,13 @@ function supPage() {
     h("div", { class: "panel-head" }, h("h3", { text: "My papers" }), h("div", { id: "paper-count" })),
     h("p", { class: "note", text: "All papers of the lab: your own and every student's (marked “Co-author”). The counts here match the totals at the top of the dashboard. Lab co-authors you pick on your own papers see them read-only in their Publications." }),
     h("div", { class: "tasks", id: "paper-list" }),
-    h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper: currently writing, submitted or accepted" }), h("div", { style: "margin-top:10px" }, paperAddForm(supSelf()))));
+    h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper: currently writing, submitted or accepted" }), h("div", { style: "margin-top:10px" }, paperAddForm(supSelf()))),
+    exportBox(() => papersOf(SUP), "WiNDS Lab"));
   return h("div", { class: "sup-page" }, tabs,
     h("div", { class: "tabpane", "data-spane": "tasks" }, minePage()),
     h("div", { class: "tabpane", "data-spane": "papers" }, papers),
     h("div", { class: "tabpane", "data-spane": "reading" }, readingPanel()),
-    h("div", { class: "tabpane", "data-spane": "meetings" }, schedPage()));
+    h("div", { class: "tabpane", "data-spane": "meetings" }, schedPage(), calendarPanel()));
 }
 function showSupTab() {
   if (!SUP_TABS.some(([k]) => k === S.supTab)) S.supTab = "tasks";
@@ -1865,6 +1980,7 @@ function bellOpen(e) {
   bellToggle(false); bellRender();
   if (e.tab && e.tab.indexOf("group:") === 0) { const gid = e.tab.slice(6); if (S.isOwner) select("__g:" + gid); else { S.tab = "messages"; S.thread = gid; select(S.sel); } return; }
   if (e.tab === "messages") S.thread = "dm";
+  if (S.isOwner && e.tab === "papers" && !e.student) { S.supTab = "papers"; select("__mine"); return; }
   if (e.tab === "confs") { if (S.isOwner) select("__confs"); else { S.tab = "confs"; select(S.sel); } return; }
   if (S.isOwner) { if (!e.student || !S.students.some(x => x.id === e.student)) { select(null); return; } S.tab = e.tab || "tasks"; select(e.student); }
   else { S.tab = e.tab || "tasks"; select(S.sel); }
