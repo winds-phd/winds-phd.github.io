@@ -225,10 +225,11 @@ function dispatch_(action, req) {
       if (!data || typeof data !== "object" || Array.isArray(data)) fail_("invalid-argument", "A record must be an object.");
       const cur = getDoc_(path), prevRev = currentRev_();
       if (u.role === "student" && segs[0] === "students" && segs[1] !== u.login.slice(8)) fail_("permission-denied", "Only the student who added this paper, or the supervisor, can change it.");
+      if (u.role === "student" && segs[0] === "supervisor") fail_("permission-denied", "Only the supervisor can change the supervisor's papers.");
       if (segs[0] === "conferences" && u.role !== "supervisor" && cur && cur.createdBy !== u.login) fail_("permission-denied", "You can only change conference entries you added.");
       if (action === "update") { if (!cur) fail_("not-found", "That record no longer exists."); data = Object.assign({}, cur, data); }
       if (isLeave_(segs)) data = checkLeave_(u, cur, data);
-      if (segs[0] === "students" && segs[2] === "papers" && segs.length === 4) data.coauthors = cleanCoauthors_(data.coauthors, segs[1]);
+      if ((segs[0] === "students" || segs[0] === "supervisor") && segs[2] === "papers" && segs.length === 4) data.coauthors = cleanCoauthors_(data.coauthors, segs[1]);
       if (segs[0] === "students" && segs[2] === "messages") fail_("permission-denied", "Messages can't be edited. Delete it and send a new one.");
       if (segs[0] === "groups") data = checkGroupWrite_(u, segs, data);
       if (segs[0] === "students" && segs[2] === "msgstate") data = Object.assign({}, cur || {}, u.role === "supervisor" ? { supSeen: Number(data.supSeen) || 0 } : { stuSeen: Number(data.stuSeen) || 0 });
@@ -246,6 +247,7 @@ function dispatch_(action, req) {
       if (u.role === "student" && segs[0] === "students" && segs[2] === "tasks") fail_("permission-denied", "Only the supervisor can delete tasks.");
       if (u.role === "student" && segs[0] === "students" && segs[2] === "schedule") fail_("permission-denied", "Only the supervisor can cancel scheduled meetings.");
       if (u.role === "student" && segs[0] === "students" && segs[1] !== u.login.slice(8)) fail_("permission-denied", "Only the student who added this paper, or the supervisor, can delete it.");
+      if (u.role === "student" && segs[0] === "supervisor") fail_("permission-denied", "Only the supervisor can delete the supervisor's papers.");
       if (segs[0] === "groups" && u.role !== "supervisor" && !(segs[2] === "messages" && segs.length === 4 && (getDoc_(path) || {}).createdBy === u.login))
         fail_("permission-denied", segs.length === 2 ? "Only the supervisor can delete a group." : "You can only delete your own messages.");
       if (u.role === "student" && isLeave_(segs)) fail_("permission-denied", "Leave records can't be deleted. Withdraw a pending request instead.");
@@ -278,7 +280,7 @@ function dispatch_(action, req) {
       }
       if (segs[0] === "students" && segs[2] === "msgstate") fail_("invalid-argument", "Use set for read status.");
       if (segs[0] === "groups") data = checkGroupAdd_(u, segs, data);
-      if (segs[0] === "students" && segs[2] === "papers" && segs.length === 3) data.coauthors = cleanCoauthors_(data.coauthors, segs[1]);   // record who added it, so only they (or the supervisor) can remove it
+      if ((segs[0] === "students" || segs[0] === "supervisor") && segs[2] === "papers" && segs.length === 3) data.coauthors = cleanCoauthors_(data.coauthors, segs[1]);   // record who added it, so only they (or the supervisor) can remove it
       const want = String(req.id || "");
       const id = SEGMENT.test(want) && want.length <= 40 ? want : Utilities.getUuid().replace(/-/g, "").slice(0, 20);
       if (getDoc_(segs.join("/") + "/" + id)) return { id: id, prevRev: currentRev_(), rev: currentRev_() };   // already saved: a repeated click or retry
@@ -302,6 +304,7 @@ function canSee_(u, segs) {
   if (segs[0] === "conferences") return true;
   if (segs[0] === "groups") return segs.length >= 2 && isMember_(segs[1], u.login.slice("student:".length));
   if (segs.length === 4 && segs[0] === "students" && segs[2] === "papers" && segs[1] !== u.login.slice(8)) return isCoauthor_(segs.join("/"), u.login.slice(8));
+  if (segs.length === 4 && segs[0] === "supervisor" && segs[2] === "papers") return isCoauthor_(segs.join("/"), u.login.slice(8));   // the supervisor's own paper, read-only for its lab co-authors
   return segs.length >= 2 && segs[0] === "students" && segs[1] === u.login.slice("student:".length);
 }
 function splitPath_(p) {
@@ -648,6 +651,14 @@ function logChange_(u, op, segs, before, after) {
       return;
     }
     if (segs[2] === "messages" && op === "add") return logActivity_(Object.assign(base, { text: who + " in " + gname + ": " + (ex.text.length > 140 ? ex.text.slice(0, 140) + "…" : ex.text) }));
+    return;
+  }
+  if (segs[0] === "supervisor" && segs[2] === "papers" && segs.length === 4) {   // the supervisor's own paper: tell its lab co-authors
+    const b = before || {}, a = after || {}, t = q(ex.title), st = x => x === "Currently writing" ? "Draft" : x;
+    (a.coauthors || []).filter(k => (b.coauthors || []).indexOf(k) < 0).forEach(k =>
+      logActivity_(Object.assign({}, base, { student: k, tab: "papers", text: "Supervisor added you as a co-author on " + t })));
+    if (before && after && b.status !== a.status) (a.coauthors || []).filter(k => (b.coauthors || []).indexOf(k) >= 0).forEach(k =>
+      logActivity_(Object.assign({}, base, { student: k, tab: "papers", text: "Supervisor's paper " + t + " moved to " + st(a.status) })));
     return;
   }
   if (segs[0] !== "students") return;                       // supervisor's own items, lab code: no notifications

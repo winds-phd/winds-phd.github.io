@@ -63,6 +63,13 @@ A private conversation between you and each student. Only the two of you can rea
 - Enter sends, Shift+Enter starts a new line. "✓ Seen" appears under your last message once the other person has opened the conversation. You can delete your own messages (you can also delete a student's); messages can't be edited.
 - New messages show up in the bell and as "N new" counts on the tab, the left column and the student's name. **No email is sent for messages.**
 
+## Supervisor workspace
+"Supervisor" in the left column (it replaced "My tasks & reminders" and "Scheduled meetings") has four tabs:
+- **Tasks & reminders:** your own to-do list and reminders, as before. Only you can see it.
+- **My papers:** your own papers, with the same Draft → Submitted → Accepted stages, Overleaf link, history and co-author fields as student papers. You can add, edit and delete them. Lab co-authors you pick see the paper in their Publications (marked "Co-author", read-only) and get a bell alert when added and when its status changes. Outside co-authors are typed as text. Papers without lab co-authors stay private to you.
+- **Reading list:** papers to read (title, type, venue, link, note). Tick one when you've read it. Only you can see it.
+- **Meetings:** schedule individual or group meetings, including recurring ones, as before.
+
 ## Co-authors on papers
 When adding or editing a paper there are two co-author fields:
 - **Co-authors from the lab:** a drop-down of everyone registered (grouped by course); each pick becomes a chip you can remove with ×. The paper then also appears in each co-author's Publications, marked **Co-author**, and counts towards their Draft / Submitted / Accepted numbers. They get a bell alert when added and whenever the paper's status changes.
@@ -91,9 +98,10 @@ Each student has a **Profile & leave** tab: name, admission number, course, year
 - For group meetings you can tick **All PhD**, **All Masters** or **All B-Tech** instead of picking names.
 
 ## Which Apps Script project holds your data (important)
-- **The site uses this web app link** (in `assets/config.js`): the one ending in **`…BQj1mDnuoA/exec`**. The project behind it is connected to the Sheet with all your records. **Always update that project:** paste the new Code.gs, then **Deploy → Manage deployments → ✏️ → New version → Deploy**. Never "New deployment"; that creates a different link.
-- **Not used:** the Gmail project "PhD Supervision Log" (link ending in `…lRHzd/exec`) and its Sheet "PhD Supervision Log — data" (`…/d/1OiA1o7…`) were never used for real data. If that project asks for a setup key or a supervisor sign-up, ignore it.
-- To check any project safely: run `init`. "Supervisor account already exists" means it's connected to your data; a SETUP KEY in the log means it isn't.
+- **Working project:** the Apps Script project **"PhD Supervisor"** (personal Gmail). Its web app link ends in **`…BQj1mDnuoA/exec`**, which is what `assets/config.js` uses.
+- **Real data Sheet:** "PhD Supervision Log — data" with ID **`12UK3C58VqG0BT_CMW_D8wgWp26qy5c8Nid21EzJEEKk`**. Running `init` in "PhD Supervisor" says "Supervisor account already exists".
+- **To update the server:** open "PhD Supervisor", paste the new Code.gs, save, then **Deploy → Manage deployments → ✏️ → New version → Deploy**. Never "New deployment"; that creates a different link.
+- **Not used:** the project "PhD Supervision Log" (link ending in `…lRHzd/exec`) and its Sheet with the same name, "PhD Supervision Log — data" (ID starting `1OiA1o7…`). It was never used for real data. If it shows a setup key or asks for a supervisor sign-up, ignore it. Consider renaming that pair "OLD – not used".
 
 ## In-app notifications (the bell)
 The 🔔 in the top bar shows changes made by the **other side**, with a red count of unread items:

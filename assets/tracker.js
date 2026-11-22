@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261121-1520";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261122-1400";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -32,7 +32,7 @@ const PTYPES = ["Journal article", "Conference paper", "Review article", "Book c
 const INDEXING = ["SCI / SCIE", "Scopus", "ESCI", "UGC-CARE", "Web of Science", "Not indexed", "Not yet known"];
 const QUARTILES = ["—", "Q1", "Q2", "Q3", "Q4"];
 const NCOLL = 4;
-const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], leaves: [], messages: [], msgstate: [], groups: [], gmsgs: [], gseen: [], thread: "dm", sharedPapers: [], leaveYear: new Date().getFullYear(), tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
+const S = { course: "all", mine: [], schedule: [], isOwner: false, myRole: "student", confs: [], refs: [], papers: [], leaves: [], messages: [], msgstate: [], supPapers: [], supRefs: [], supTab: "tasks", groups: [], gmsgs: [], gseen: [], thread: "dm", sharedPapers: [], leaveYear: new Date().getFullYear(), tab: "tasks", openPapers: new Set(), dirtyPapers: new Set(), sample: null, students: [], meetings: [], tasks: [], sel: null, loaded: 0, db: null, user: null, canWrite: true, uid: null, timer: null, openTasks: new Set(), filter: "all" };
 
 /** Wraps a form's submit handler: while it is saving, further clicks/Enter are ignored and the buttons are locked. */
 function guardSubmit(handler) {
@@ -155,14 +155,11 @@ function renderRoster() {
   const items = [h("button", { class: "r-item", type: "button", "aria-current": S.sel === null ? "true" : "false", onclick: () => select(null) },
     h("span", { class: "nm", text: "Group overview" }), h("span", { class: "meta", text: "All tasks and recent meetings" })),
     h("button", { class: "r-item r-mine", type: "button", "aria-current": S.sel === "__mine" ? "true" : "false", onclick: () => select("__mine") },
-      h("span", { class: "nm", text: "My tasks & reminders" }),
+      h("span", { class: "nm", text: "Supervisor" }),
       h("span", { class: "meta" }, ...mineMeta())),
     h("button", { class: "r-item r-conf", type: "button", "aria-current": S.sel === "__confs" ? "true" : "false", onclick: () => select("__confs") },
       h("span", { class: "nm", text: "Upcoming conferences" }),
       h("span", { class: "meta", text: (() => { const n = (S.confs || []).filter(c => !c.deadline || diff(todayStr(), c.deadline) >= 0).length; return n ? plural(n, "upcoming deadline") : "Add and view conference deadlines"; })() })),
-    h("button", { class: "r-item r-sched", type: "button", "aria-current": S.sel === "__sched" ? "true" : "false", onclick: () => select("__sched") },
-      h("span", { class: "nm", text: "Scheduled meetings" }),
-      h("span", { class: "meta", text: (() => { const n = upcomingSched().length; return n ? plural(n, "upcoming meeting") : "Plan group or individual meetings"; })() })),
     h("button", { class: "r-item r-msg", type: "button", "aria-current": S.sel === "__msgs" || String(S.sel).startsWith("__g:") ? "true" : "false", onclick: () => select("__msgs") },
       h("span", { class: "nm" }, "Messages", allUnread() ? h("span", { class: "chip msg", style: "margin-left:8px", text: String(allUnread()) }) : null),
       h("span", { class: "meta", text: (() => { const n = S.students.filter(x => unreadOf(x.id).length).length + groupsMine().filter(g => gUnread(g.id)).length; return n ? "Unread in " + plural(n, "conversation") : groupsMine().length ? plural(groupsMine().length, "group") + " · private conversations" : "Groups and private conversations"; })() })),
@@ -626,17 +623,26 @@ function refreshGroupPage(g) {
 }
 
 /* ---------- publications ---------- */
-function P(kind, item) { return "students/" + item.studentId + "/" + kind + "/" + item.id; }
-function C(kind, sid) { return "students/" + sid + "/" + kind; }
+/* "__sup" stands for the supervisor's own workspace (their papers and reading list live under supervisor/me/). */
+const SUP = "__sup";
+function P(kind, item) { return item.studentId === SUP ? "supervisor/me/" + kind + "/" + item.id : "students/" + item.studentId + "/" + kind + "/" + item.id; }
+function C(kind, sid) { return sid === SUP ? "supervisor/me/" + kind : "students/" + sid + "/" + kind; }
+/** Whose papers the current page shows: a student's, or the supervisor's own. */
+function viewSid() { return S.sel === "__mine" ? SUP : S.sel; }
 /** A student's papers: the ones they added plus the ones where a labmate listed them as co-author. */
-function papersOf(sid) { return S.papers.filter(p => !sid || p.studentId === sid || (p.coauthors || []).includes(sid)); }
+function papersOf(sid) {
+  if (sid === SUP) return [...(S.supPapers || [])];
+  return S.papers.filter(p => !sid || p.studentId === sid || (p.coauthors || []).includes(sid))
+    .concat(sid ? (S.supPapers || []).filter(p => (p.coauthors || []).includes(sid)) : []);   // the supervisor's papers listing this student
+}
 function ownPapers(sid) { return S.papers.filter(p => p.studentId === sid); }
 function canEditPaper(p) { return S.canWrite && (S.isOwner || p.studentId === myKey()); }
 /** Name of anyone in the lab (the supervisor sees all records; students get names from the lab list). */
-function nameOf(key) { const s = S.students.find(x => x.id === key); if (s && s.name) return s.name; const m = labMembers().find(x => x.key === key); return m && m.name ? m.name : ""; }
+function ownerOf(p) { return p.studentId === SUP ? (p.ownerName || S.supName || "Supervisor") : nameOf(p.studentId); }
+function nameOf(key) { if (key === SUP) return S.supName || "Supervisor"; const s = S.students.find(x => x.id === key); if (s && s.name) return s.name; const m = labMembers().find(x => x.key === key); return m && m.name ? m.name : ""; }
 function authorLine(p) {
   if (p.authors) return p.authors;
-  const names = [nameOf(p.studentId), ...(p.coauthors || []).map(nameOf)].filter(Boolean);
+  const names = [ownerOf(p), ...(p.coauthors || []).map(nameOf)].filter(Boolean);
   if (p.externalAuthors) names.push(p.externalAuthors);
   return names.join(", ");
 }
@@ -696,7 +702,7 @@ function paperCard(p) {
     h("summary", null,
       h("div", { style: "min-width:0" },
         h("div", { class: "t-title", text: p.title }),
-        h("div", { class: "t-sub" }, pChip(st), p.studentId !== S.sel ? h("span", { class: "chip coauth", text: "Co-author" }) : null, h("span", { class: "chip plain", text: p.type || "Journal article" }),
+        h("div", { class: "t-sub" }, pChip(st), p.studentId !== viewSid() ? h("span", { class: "chip coauth", text: "Co-author" }) : null, h("span", { class: "chip plain", text: p.type || "Journal article" }),
           p.venue ? h("span", { class: "p-venue", text: (st === "Currently writing" ? "Target: " : "") + p.venue }) : h("span", { class: "muted", text: st === "Currently writing" ? "Target venue not set" : "Venue not set" }),
           authorLine(p) ? h("span", { class: "who", text: authorLine(p) }) : null),
         latestFeedback(p)),
@@ -711,11 +717,11 @@ function paperCard(p) {
       p.overleaf ? h("a", { class: "btn small overleaf", href: p.overleaf, target: "_blank", rel: "noopener", text: "Open draft in Overleaf ↗" })
         : h("span", { class: "note", text: canEditPaper(p) ? "No Overleaf link yet. Add it under \"Edit paper details\"." : "No Overleaf link yet." })),
     h("p", { class: "note", text: [p.type || "Journal article", p.venue ? (pStatus(p) === "Currently writing" ? "Target venue: " : "Venue: ") + p.venue : null, authorLine(p) ? "Authors: " + authorLine(p) : null].filter(Boolean).join("  ·  ") }),
-    (p.coauthors || []).filter(nameOf).length || p.studentId !== S.sel ? h("div", { class: "coauth-row" },
+    (p.coauthors || []).filter(nameOf).length || p.studentId !== viewSid() ? h("div", { class: "coauth-row" },
       h("span", { class: "label", text: "In the lab" }),
-      h("span", { class: "chip plain", text: (nameOf(p.studentId) || "Student") + " · added it" }),
+      h("span", { class: "chip plain", text: (ownerOf(p) || "Student") + " · added it" }),
       ...(p.coauthors || []).filter(nameOf).map(k => h("span", { class: "chip coauth", text: nameOf(k) + " · co-author" }))) : null,
-    !canEditPaper(p) && S.canWrite ? h("p", { class: "note", text: "You're a co-author on this paper. " + (nameOf(p.studentId) || "The student who added it") + " and the supervisor keep it up to date." }) : null,
+    !canEditPaper(p) && S.canWrite ? h("p", { class: "note", text: p.studentId === SUP ? "You're a co-author on your supervisor's paper. Your supervisor keeps it up to date." : "You're a co-author on this paper. " + (nameOf(p.studentId) || "The student who added it") + " and the supervisor keep it up to date." }) : null,
     h("div", { style: "display:grid;gap:8px" }, h("div", { class: "label", text: "Status timeline" }),
       hist.length ? h("ol", { class: "hist" }, hist.map(x => h("li", null,
         h("div", { class: "h-top" }, h("span", { class: "h-date", text: fmtD(x.date) }), pChip(x.status),
@@ -807,7 +813,7 @@ function paperAddForm(s) {
   return h("form", { class: "edit-box", hidden: !S.canWrite, onsubmit: async e => {
       e.preventDefault(); const d = readPaperFields(prefix); if (!d.title) { say("The paper needs a title."); return; }
       const status = sel.value, date = val("np-date") || todayStr();
-      const base = { ...d, studentId: s.id, status, statusSince: date, createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole,
+      const base = { ...d, studentId: s.id, ...(s.id === SUP ? { ownerName: S.supName || "Supervisor" } : {}), status, statusSince: date, createdAt: Date.now(), createdBy: S.uid, byName: S.myName, byRole: S.myRole,
         history: [{ date, status, remark: "Paper added", via: "added", by: S.uid, byName: S.myName, byRole: S.myRole }] };
       Object.assign(base, stampDates({}, status, date));
           const ok = await write(db => db.collection(C("papers", s.id)).add(base), "Paper added");
@@ -1296,7 +1302,7 @@ function mineBuckets() {
 }
 function mineMeta() {
   const b = mineBuckets();
-  if (!b.overdue.length && !b.today.length) return [h("span", { text: (S.mine || []).filter(x => !x.done).length ? "Nothing due today" : "Your own to-do list" })];
+  if (!b.overdue.length && !b.today.length) return [h("span", { text: (S.mine || []).filter(x => !x.done).length ? "Nothing due today · papers, reading, meetings" : "Tasks · my papers · reading list · meetings" })];
   return [b.today.length ? h("span", { class: "chip warn", text: b.today.length + " today" }) : null, b.overdue.length ? h("span", { class: "chip bad", text: b.overdue.length + " overdue" }) : null];
 }
 function mineItem(x) {
@@ -1364,7 +1370,7 @@ function todayPanel() {
   const b = mineBuckets(), list = [...b.overdue, ...b.today];
   if (!list.length) return null;
   return h("section", { class: "panel sec-mine today-box" },
-    h("div", { class: "panel-head" }, h("h3", { text: "Today" }), h("button", { class: "linkish", type: "button", text: "Open my tasks & reminders →", onclick: () => select("__mine") })),
+    h("div", { class: "panel-head" }, h("h3", { text: "Today" }), h("button", { class: "linkish", type: "button", text: "Open Supervisor →", onclick: () => { S.supTab = "tasks"; select("__mine"); } })),
     h("ul", { class: "refs" }, list.slice(0, 8).map(mineItem)));
 }
 let schedEl = null;
@@ -1486,7 +1492,7 @@ function refreshStudent(s) {
   document.getElementById("next-banner").replaceChildren(...(mySched[0] ? [nextBanner(mySched[0])] : []));
   document.getElementById("stu-sched-count").textContent = mySched.length ? mySched.length + " upcoming" : "";
   document.getElementById("stu-sched").replaceChildren(...(mySched.length ? mySched.map(x => schedItem(x, false))
-    : [h("li", null, h("p", { class: "note", text: S.isOwner ? "Nothing scheduled with this student. Use \"Scheduled meetings\" in the left column." : "No meetings scheduled. Your supervisor's invitations will appear here." }))]));
+    : [h("li", null, h("p", { class: "note", text: S.isOwner ? "Nothing scheduled with this student. Use Supervisor → Meetings in the left column." : "No meetings scheduled. Your supervisor's invitations will appear here." }))]));
   document.getElementById("s-figs").replaceChildren(
     stat(open.length, "Open tasks"), stat(open.filter(isOverdue).length, "Overdue", open.filter(isOverdue).length), stat(done.length, "Completed"),
     stat(avg == null ? "—" : avg + "d", "Avg. days to finish"), stat(withDue.length ? (withDue.length - late) + "/" + withDue.length : "—", "Finished on time"),
@@ -1506,7 +1512,23 @@ function refreshStudent(s) {
   const tl = document.getElementById("task-list");
   const editing = tl.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
   if (!editing) tl.replaceChildren(...items);
-  const pp = papersOf(s.id).sort((a, b) => (pActive(b) - pActive(a)) || PSTATUS.indexOf(pStatus(b)) - PSTATUS.indexOf(pStatus(a)) || (b.createdAt || 0) - (a.createdAt || 0));
+  const pp = drawPapers(papersOf(s.id));
+  document.getElementById("tabn-tasks").textContent = open.length;
+  document.getElementById("tabn-papers").textContent = pp.length;
+  document.getElementById("tabn-meetings").textContent = ms.length;
+  const refs = (S.refs || []).filter(r => r.studentId === s.id).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  document.getElementById("tabn-refs").textContent = refs.length;
+  refreshConfs();
+  document.getElementById("ref-count").textContent = plural(refs.length, "article");
+  document.getElementById("ref-list").replaceChildren(...(refs.length ? refs.map(refItem) : [h("li", null, h("p", { class: "note", text: "No articles yet. Add one above with its journal or conference and link." }))]));
+  const sorted = ms.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
+  document.getElementById("meet-count").textContent = plural(sorted.length, "meeting");
+  document.getElementById("meet-list").replaceChildren(...(sorted.length ? sorted.map(meetingItem) : [h("li", null, h("p", { class: "note", text: "No meetings logged yet." }))]));
+  resolveNames();
+}
+/** Draws a list of papers grouped Draft → Submitted → Accepted into #paper-list (student page or the supervisor's own). */
+function drawPapers(list) {
+  const pp = list.sort((a, b) => (pActive(b) - pActive(a)) || PSTATUS.indexOf(pStatus(b)) - PSTATUS.indexOf(pStatus(a)) || (b.createdAt || 0) - (a.createdAt || 0));
   const pl = document.getElementById("paper-list");
   const pEditing = pl.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
   if (!pEditing && !S.dirtyPapers.size) {
@@ -1522,18 +1544,7 @@ function refreshStudent(s) {
   const writing = pp.filter(p => pStatus(p) === "Currently writing").length, acc = pp.filter(p => ["Accepted", "Published"].includes(pStatus(p))).length;
   document.getElementById("paper-count").replaceChildren(pubCounters(pp));
   const addBox = document.getElementById("paper-add"); if (addBox && !pp.length) addBox.open = true;
-  document.getElementById("tabn-tasks").textContent = open.length;
-  document.getElementById("tabn-papers").textContent = pp.length;
-  document.getElementById("tabn-meetings").textContent = ms.length;
-  const refs = (S.refs || []).filter(r => r.studentId === s.id).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  document.getElementById("tabn-refs").textContent = refs.length;
-  refreshConfs();
-  document.getElementById("ref-count").textContent = plural(refs.length, "article");
-  document.getElementById("ref-list").replaceChildren(...(refs.length ? refs.map(refItem) : [h("li", null, h("p", { class: "note", text: "No articles yet. Add one above with its journal or conference and link." }))]));
-  const sorted = ms.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
-  document.getElementById("meet-count").textContent = plural(sorted.length, "meeting");
-  document.getElementById("meet-list").replaceChildren(...(sorted.length ? sorted.map(meetingItem) : [h("li", null, h("p", { class: "note", text: "No meetings logged yet." }))]));
-  resolveNames();
+  return pp;
 }
 function resolveNames() { /* names are stored with each entry */ }
 function bySup(x) { return !!x && (x.byRole === "supervisor" || x.byName === "Supervisor"); }
@@ -1548,17 +1559,97 @@ function latestFeedback(item) {
   return f ? h("div", { class: "fb fb-inline" }, h("span", { class: "fb-tag", text: "Supervisor · " + fmtD(f.date) }), h("span", { text: f.remark })) : null;
 }
 
+
+/* ---------- Supervisor workspace: own tasks, own papers, reading list, meetings ---------- */
+const SUP_TABS = [["tasks", "Tasks & reminders"], ["papers", "My papers"], ["reading", "Reading list"], ["meetings", "Meetings"]];
+function supSelf() { return { id: SUP, name: S.myName || "Supervisor" }; }
+function supPage() {
+  const tabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Supervisor" }, SUP_TABS.map(([k, l]) =>
+    h("button", { type: "button", role: "tab", "data-stab": k, class: "tab-sup-" + k, "aria-selected": S.supTab === k ? "true" : "false", onclick: () => { S.supTab = k; showSupTab(); refreshSup(); } },
+      l, h("span", { class: "n", id: "stabn-" + k }))));
+  const papers = h("section", { class: "panel sec-pubs" },
+    h("div", { class: "panel-head" }, h("h3", { text: "My papers" }), h("div", { id: "paper-count" })),
+    h("p", { class: "note", text: "Your own papers, with or without students. Pick lab co-authors from the drop-down (the paper then also appears in their Publications, read-only) and type anyone else under “Co-authors outside the lab”." }),
+    h("div", { class: "tasks", id: "paper-list" }),
+    h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper: currently writing, submitted or accepted" }), h("div", { style: "margin-top:10px" }, paperAddForm(supSelf()))));
+  return h("div", { class: "sup-page" }, tabs,
+    h("div", { class: "tabpane", "data-spane": "tasks" }, minePage()),
+    h("div", { class: "tabpane", "data-spane": "papers" }, papers),
+    h("div", { class: "tabpane", "data-spane": "reading" }, readingPanel()),
+    h("div", { class: "tabpane", "data-spane": "meetings" }, schedPage()));
+}
+function showSupTab() {
+  if (!SUP_TABS.some(([k]) => k === S.supTab)) S.supTab = "tasks";
+  document.querySelectorAll("[data-stab]").forEach(b => b.setAttribute("aria-selected", b.dataset.stab === S.supTab ? "true" : "false"));
+  document.querySelectorAll("[data-spane]").forEach(p => p.hidden = p.dataset.spane !== S.supTab);
+}
+function refreshSup() {
+  refreshMine(); refreshSched();
+  const pp = drawPapers(papersOf(SUP));
+  const n = (k, v) => { const el = document.getElementById("stabn-" + k); if (el) el.textContent = v || ""; };
+  const b = mineBuckets();
+  n("tasks", b.overdue.length + b.today.length + b.upcoming.length + b.nodate.length);
+  n("papers", pp.length);
+  n("reading", (S.supRefs || []).filter(r => !r.read).length);
+  n("meetings", upcomingSched().length);
+  refreshReading();
+}
+function readingPanel() {
+  const type = h("select", { id: "sr-type" }, ["Journal", "Conference", "Other"].map(x => h("option", { value: x, text: x === "Other" ? "Other (preprint, book, thesis…)" : x })));
+  const form = h("form", { class: "edit-box", onsubmit: async e => {
+      e.preventDefault(); const title = val("sr-title").trim(); let link = val("sr-link").trim();
+      if (!title) { say("Add the paper's title."); return; }
+      if (link && !/^https?:\/\//i.test(link)) link = /^10\.\d{4,}\//.test(link) ? "https://doi.org/" + link : "https://" + link;
+      const ok = await write(db => db.collection("supervisor/me/refs").add({ title, link, type: type.value, venue: val("sr-venue").trim(), note: val("sr-note").trim(), read: false, added: todayStr(), createdAt: Date.now() }), "Added to your reading list");
+      if (ok) ["sr-title", "sr-link", "sr-venue", "sr-note"].forEach(id => document.getElementById(id).value = "");
+    } },
+    h("h4", { text: "Add a paper to read" }),
+    h("label", { class: "fieldlabel" }, "Title", h("input", { id: "sr-title", maxlength: "400", placeholder: "e.g. Graph Neural Networks for Wireless Resource Allocation" })),
+    h("div", { class: "row" }, h("label", { class: "fieldlabel" }, "Type", type),
+      h("label", { class: "fieldlabel" }, "Journal / conference (optional)", h("input", { id: "sr-venue", maxlength: "300", placeholder: "e.g. IEEE JSAC" }))),
+    h("div", { class: "row" },
+      h("label", { class: "fieldlabel" }, "Link (URL or DOI)", h("input", { id: "sr-link", maxlength: "500", placeholder: "https://… or 10.xxxx/…" })),
+      h("label", { class: "fieldlabel" }, "Note (optional)", h("input", { id: "sr-note", maxlength: "300", placeholder: "Why read it, for which project" }))),
+    h("div", null, h("button", { class: "btn", type: "submit", text: "Add to reading list" })));
+  return h("section", { class: "panel sec-refs" },
+    h("div", { class: "panel-head" }, h("h3", { text: "Reading list" }), h("span", { class: "muted", id: "sr-count" })),
+    h("p", { class: "note", text: "Papers you want to read. Only you can see this list. Tick one off when you've read it." }),
+    form, h("div", { id: "sr-list" }));
+}
+function readingItem(r) {
+  let host = ""; try { host = r.link ? new URL(r.link).hostname.replace(/^www\./, "") : ""; } catch (e) { host = ""; }
+  const box = h("input", { type: "checkbox", checked: !!r.read, "aria-label": "Read", onchange: e => write(db => db.doc("supervisor/me/refs/" + r.id).update({ read: e.target.checked, readOn: e.target.checked ? todayStr() : "" }), e.target.checked ? "Marked as read" : "Moved back to “To read”") });
+  let armed = null; const del = h("button", { class: "x", type: "button", text: "Remove" });
+  del.onclick = () => { if (!armed) { del.textContent = "Confirm remove"; armed = setTimeout(() => { armed = null; del.textContent = "Remove"; }, 4000); return; } clearTimeout(armed); write(db => db.doc("supervisor/me/refs/" + r.id).delete(), "Removed from your reading list"); };
+  return h("li", { class: "ref reading" + (r.read ? " is-read" : "") },
+    h("label", { class: "reading-check" }, box),
+    h("div", { style: "min-width:0;flex:1" },
+      r.link ? h("a", { class: "ref-title", href: r.link, target: "_blank", rel: "noopener", text: r.title }) : h("span", { class: "ref-title", text: r.title }),
+      h("div", { class: "t-sub" }, r.type ? h("span", { class: "chip " + (r.type === "Journal" ? "" : "plain"), text: r.type }) : null,
+        r.venue ? h("span", { class: "p-venue", text: r.venue }) : null, host ? h("span", { class: "mono", text: host }) : null,
+        h("span", { text: r.read && r.readOn ? "Read " + fmtD(r.readOn) : "Added " + fmtD(r.added) })),
+      r.note ? h("p", { class: "ref-note", text: r.note }) : null),
+    del);
+}
+function refreshReading() {
+  const box = document.getElementById("sr-list"); if (!box) return;
+  const all = [...(S.supRefs || [])].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const todo = all.filter(r => !r.read), done = all.filter(r => r.read).sort((a, b) => (b.readOn || "").localeCompare(a.readOn || ""));
+  document.getElementById("sr-count").textContent = todo.length + " to read" + (done.length ? " · " + done.length + " read" : "");
+  box.replaceChildren(
+    h("div", { class: "task-group" }, h("span", { text: "To read" }), h("span", { class: "mono", text: String(todo.length) })),
+    h("ul", { class: "refs" }, ...(todo.length ? todo.map(readingItem) : [h("li", null, h("p", { class: "note", text: "Nothing waiting. Add a paper above." }))])),
+    ...(done.length ? [h("details", { class: "sub" }, h("summary", { text: plural(done.length, "paper") + " read" }), h("ul", { class: "refs", style: "margin-top:8px" }, done.map(readingItem)))] : []));
+}
+
 let builtFor = null;
 function renderDetail(force) {
   if (!S.isOwner && S.sel === null && S.loaded >= NCOLL && S.students.length) S.sel = S.students[0].id;
   if (S.sel === null) { builtFor = null; renderOverview(); return; }
+  if (S.sel === "__sched") { S.sel = "__mine"; S.supTab = "meetings"; builtFor = null; }   // meetings now live under Supervisor
   if (S.sel === "__mine") {
-    if (builtFor !== "__mine" || force) { document.getElementById("detail").replaceChildren(minePage()); builtFor = "__mine"; }
-    refreshMine(); return;
-  }
-  if (S.sel === "__sched") {
-    if (builtFor !== "__sched" || force) { document.getElementById("detail").replaceChildren(schedPage()); builtFor = "__sched"; }
-    refreshSched(); return;
+    if (builtFor !== "__mine" || force) { document.getElementById("detail").replaceChildren(supPage()); builtFor = "__mine"; showSupTab(); }
+    refreshSup(); return;
   }
   if (String(S.sel).startsWith("__g:")) {
     const g = (S.groups || []).find(x => x.id === S.sel.slice(4));
@@ -1717,6 +1808,7 @@ export async function start(pageRole) {
   if (document.getElementById("bellBtn")) bellInit(user);
   try { const c = localStorage.getItem("winds.course"); if (c && (c === "all" || COURSES.includes(c))) S.course = c; } catch (e) { /* default: all */ }
   S.myName = sup ? "Supervisor" : (user.displayName || "Student"); S.myRole = sup ? "supervisor" : "student";
+  S.supName = sup ? (user.displayName || "Supervisor") : "";
   showAccount(sup ? (user.displayName && user.displayName !== "Supervisor" ? user.displayName : "Supervisor") : (user.displayName || "Student"), sup ? "Supervisor · " + user.email : "Student");
   S.timer = setTimeout(() => { if (S.loaded < NCOLL) { const n = document.getElementById("loadnote"); if (n) n.textContent = "Can't reach the saved records yet. They'll appear when the connection returns."; } }, 10000);
   renderAll();
@@ -1752,6 +1844,8 @@ export async function start(pageRole) {
       try { await navigator.clipboard.writeText(url); say("Sign-up link copied"); }
       catch (e) { const r = document.createRange(); r.selectNodeContents(document.getElementById("signupUrl")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); say("Press Ctrl+C to copy the selected link"); }
     };
+    db.collection("supervisor/me/papers").onSnapshot(snap => { S.supPapers = snap.docs.map(d => ({ ...d.data(), id: d.id, studentId: SUP })); renderAll(); }, () => {});
+    db.collection("supervisor/me/refs").onSnapshot(snap => { S.supRefs = snap.docs.map(d => ({ ...d.data(), id: d.id, studentId: SUP })); renderAll(); }, () => {});
     db.collection("supervisor/me/items").onSnapshot(snap => {
       S.mine = snap.docs.map(d => ({ ...d.data(), id: d.id }));
       const ae = document.activeElement;
@@ -1773,6 +1867,7 @@ export async function start(pageRole) {
       S.myName = snap.data().name || S.myName;
       showAccount(S.myName, "Student · " + (snap.data().admissionNo || key.toUpperCase()) + " · " + courseOf(snap.data()));
       watchStudent(key); S.sel = key;
+      if (!S.supSub) S.supSub = db.collection("supervisor/me/papers").onSnapshot(sn => { S.supPapers = sn.docs.map(d => ({ ...d.data(), id: d.id, studentId: SUP, shared: true })); renderAll(); }, () => {});
       if (!S.sharedSub) S.sharedSub = db.collectionGroup("papers").onSnapshot(sn => {
         S.sharedPapers = sn.docs.filter(d => d.owner !== key).map(d => ({ ...d.data(), id: d.id, studentId: d.owner, shared: true })); rebuildFlat(); renderAll();
       }, () => {});
