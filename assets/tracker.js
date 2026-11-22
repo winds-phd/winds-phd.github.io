@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261122-1400";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers } from "./core.js?v=20261122-1355";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -148,7 +148,7 @@ function renderStats() {
   const avg = avgDays(all);
   document.getElementById("stats").replaceChildren(
     stat(scopedStudents().length, S.course === "all" ? "Students" : S.course + " students"), stat(open.length, "Open tasks"), stat(od.length, "Overdue", od.length),
-    stat(done.length, "Completed"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).draft, "Draft papers"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).submitted, "Submitted"), stat(pubCounts(S.papers.filter(p => inScope(p.studentId))).accepted, "Accepted"), stat(avg == null ? "—" : avg + "d", "Avg. time to finish"), stat(stale.length, "Not met in 30 days", stale.length),
+    stat(done.length, "Completed"), stat(pubCounts(labPapers()).draft, "Draft papers"), stat(pubCounts(labPapers()).submitted, "Submitted"), stat(pubCounts(labPapers()).accepted, "Accepted"), stat(avg == null ? "—" : avg + "d", "Avg. time to finish"), stat(stale.length, "Not met in 30 days", stale.length),
     stat(pendingLeaves().length, "Leave requests", pendingLeaves().length));
 }
 function renderRoster() {
@@ -631,15 +631,17 @@ function C(kind, sid) { return sid === SUP ? "supervisor/me/" + kind : "students
 function viewSid() { return S.sel === "__mine" ? SUP : S.sel; }
 /** A student's papers: the ones they added plus the ones where a labmate listed them as co-author. */
 function papersOf(sid) {
-  if (sid === SUP) return [...(S.supPapers || [])];
+  if (sid === SUP) return [...(S.supPapers || []), ...(S.isOwner ? S.papers : [])];   // the supervisor's own papers + every student paper (all are common papers)
   return S.papers.filter(p => !sid || p.studentId === sid || (p.coauthors || []).includes(sid))
     .concat(sid ? (S.supPapers || []).filter(p => (p.coauthors || []).includes(sid)) : []);   // the supervisor's papers listing this student
 }
+/** Papers counted at the top of the dashboard: students' papers in the chosen course, plus the supervisor's own when showing everyone. Matches Supervisor → My papers. */
+function labPapers() { return S.papers.filter(p => inScope(p.studentId)).concat(S.course === "all" ? (S.supPapers || []) : []); }
 function ownPapers(sid) { return S.papers.filter(p => p.studentId === sid); }
 function canEditPaper(p) { return S.canWrite && (S.isOwner || p.studentId === myKey()); }
 /** Name of anyone in the lab (the supervisor sees all records; students get names from the lab list). */
 function ownerOf(p) { return p.studentId === SUP ? (p.ownerName || S.supName || "Supervisor") : nameOf(p.studentId); }
-function nameOf(key) { if (key === SUP) return S.supName || "Supervisor"; const s = S.students.find(x => x.id === key); if (s && s.name) return s.name; const m = labMembers().find(x => x.key === key); return m && m.name ? m.name : ""; }
+function nameOf(key) { if (key === SUP) return S.supName || (labMembers().find(x => x.key === SUP) || {}).name || "Supervisor"; const s = S.students.find(x => x.id === key); if (s && s.name) return s.name; const m = labMembers().find(x => x.key === key); return m && m.name ? m.name : ""; }
 function authorLine(p) {
   if (p.authors) return p.authors;
   const names = [ownerOf(p), ...(p.coauthors || []).map(nameOf)].filter(Boolean);
@@ -767,12 +769,12 @@ function coauthorPicker(prefix, ownerSid, chosen) {
   const sel = h("select", { "aria-label": "Add a co-author from the lab" });
   const draw = () => {
     const keys = JSON.parse(box.dataset.keys || "[]");
-    const people = (labMembers().length ? labMembers() : S.students.map(x => ({ key: x.id, name: x.name, course: courseOf(x) }))).filter(m => m.key !== ownerSid && m.name);
+    const people = (labMembers().length ? labMembers() : [{ key: SUP, name: nameOf(SUP), course: "Supervisor" }, ...S.students.map(x => ({ key: x.id, name: x.name, course: courseOf(x) }))]).filter(m => m.key !== ownerSid && m.name);
     const left = people.filter(m => !keys.includes(m.key));
     const noList = !labMembers().length && !S.isOwner;          // the server didn't send the lab list (old Code.gs deployed)
     warn.hidden = !noList;
     sel.replaceChildren(h("option", { value: "", text: left.length ? "Add a co-author from WiNDS Lab…" : noList ? "Lab member list not available" : people.length ? "Everyone in the lab is added" : "No other lab members yet" }),
-      ...COURSES.map(c => [c, left.filter(m => (m.course || "PhD") === c)]).filter(([, l]) => l.length).map(([c, l]) => h("optgroup", { label: c }, l.map(m => h("option", { value: m.key, text: m.name })))));
+      ...[["Supervisor", left.filter(m => m.key === SUP)], ...COURSES.map(c => [c, left.filter(m => m.key !== SUP && (m.course || "PhD") === c)])].filter(([, l]) => l.length).map(([c, l]) => h("optgroup", { label: c }, l.map(m => h("option", { value: m.key, text: m.name })))));
     sel.disabled = !left.length;
     chips.replaceChildren(...keys.map(k => h("span", { class: "chip coauth removable" }, nameOf(k) || k.toUpperCase(),
       h("button", { type: "button", "aria-label": "Remove " + (nameOf(k) || k) + " as co-author", text: "×", onclick: () => { box.dataset.keys = JSON.stringify(keys.filter(x => x !== k)); draw(); box.dispatchEvent(new Event("input", { bubbles: true })); } }))));
@@ -1569,7 +1571,7 @@ function supPage() {
       l, h("span", { class: "n", id: "stabn-" + k }))));
   const papers = h("section", { class: "panel sec-pubs" },
     h("div", { class: "panel-head" }, h("h3", { text: "My papers" }), h("div", { id: "paper-count" })),
-    h("p", { class: "note", text: "Your own papers, with or without students. Pick lab co-authors from the drop-down (the paper then also appears in their Publications, read-only) and type anyone else under “Co-authors outside the lab”." }),
+    h("p", { class: "note", text: "All papers of the lab: your own and every student's (marked “Co-author”). The counts here match the totals at the top of the dashboard. Lab co-authors you pick on your own papers see them read-only in their Publications." }),
     h("div", { class: "tasks", id: "paper-list" }),
     h("details", { class: "sub", id: "paper-add" }, h("summary", { text: "+ Add a paper: currently writing, submitted or accepted" }), h("div", { style: "margin-top:10px" }, paperAddForm(supSelf()))));
   return h("div", { class: "sup-page" }, tabs,

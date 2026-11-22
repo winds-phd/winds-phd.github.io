@@ -66,7 +66,7 @@ A private conversation between you and each student. Only the two of you can rea
 ## Supervisor workspace
 "Supervisor" in the left column (it replaced "My tasks & reminders" and "Scheduled meetings") has four tabs:
 - **Tasks & reminders:** your own to-do list and reminders, as before. Only you can see it.
-- **My papers:** your own papers, with the same Draft → Submitted → Accepted stages, Overleaf link, history and co-author fields as student papers. You can add, edit and delete them. Lab co-authors you pick see the paper in their Publications (marked "Co-author", read-only) and get a bell alert when added and when its status changes. Outside co-authors are typed as text. Papers without lab co-authors stay private to you.
+- **My papers:** all papers of the lab: your own **plus every student's paper** (marked "Co-author"), so its Draft / Submitted / Accepted counts equal the totals at the top of the dashboard (with "All students" selected). Your own papers have the same stages, Overleaf link, history and co-author fields as student papers; you can add, edit and delete them. Students can also pick you in their co-author drop-down, so your name appears in the author list. Lab co-authors you pick see the paper in their Publications (marked "Co-author", read-only) and get a bell alert when added and when its status changes. Outside co-authors are typed as text. Papers without lab co-authors stay private to you.
 - **Reading list:** papers to read (title, type, venue, link, note). Tick one when you've read it. Only you can see it.
 - **Meetings:** schedule individual or group meetings, including recurring ones, as before.
 
@@ -98,7 +98,7 @@ Each student has a **Profile & leave** tab: name, admission number, course, year
 - For group meetings you can tick **All PhD**, **All Masters** or **All B-Tech** instead of picking names.
 
 ## Which Apps Script project holds your data (important)
-- **Working project:** the Apps Script project **"PhD Supervisor"** (personal Gmail). Its web app link ends in **`…BQj1mDnuoA/exec`**, which is what `assets/config.js` uses.
+- **Working project:** the Apps Script project **"PhD Supervisor"** (personal Gmail). Its web app link ends in **`…QBj1mDnuoA/exec`**, which is what `assets/config.js` uses.
 - **Real data Sheet:** "PhD Supervision Log — data" with ID **`12UK3C58VqG0BT_CMW_D8wgWp26qy5c8Nid21EzJEEKk`**. Running `init` in "PhD Supervisor" says "Supervisor account already exists".
 - **To update the server:** open "PhD Supervisor", paste the new Code.gs, save, then **Deploy → Manage deployments → ✏️ → New version → Deploy**. Never "New deployment"; that creates a different link.
 - **Not used:** the project "PhD Supervision Log" (link ending in `…lRHzd/exec`) and its Sheet with the same name, "PhD Supervision Log — data" (ID starting `1OiA1o7…`). It was never used for real data. If it shows a setup key or asks for a supervisor sign-up, ignore it. Consider renaming that pair "OLD – not used".

@@ -828,8 +828,10 @@ function checkGroupAdd_(u, segs, d) {
  *  are plain text (externalAuthors). The sync reply carries a small lab directory (name, course) for the drop-down.
  */
 function isCoauthor_(path, key) { const d = getDoc_(path); return !!d && Array.isArray(d.coauthors) && d.coauthors.indexOf(key) >= 0; }
-function cleanCoauthors_(v, owner) { return (Array.isArray(v) ? v : []).map(String).filter((k, i, a) => SEGMENT.test(k) && k !== owner && a.indexOf(k) === i).slice(0, 30); }
+/* "__sup" in a student's coauthors means the supervisor; it's dropped on the supervisor's own papers (owner "me"). */
+function cleanCoauthors_(v, owner) { return (Array.isArray(v) ? v : []).map(String).filter((k, i, a) => SEGMENT.test(k) && k !== owner && !(owner === "me" && k === "__sup") && a.indexOf(k) === i).slice(0, 30); }
 function labDirectory_() {
-  return loadDocs_().list.filter(d => /^students\/[^/]+$/.test(d.path))
-    .map(d => ({ key: d.path.slice(9), name: (d.data || {}).name || "", course: (d.data || {}).course || (d.data || {}).stage || "PhD" }));
+  const sup = users_().filter(x => x.role === "supervisor")[0];
+  return (sup ? [{ key: "__sup", name: sup.name || "Supervisor", course: "Supervisor" }] : []).concat(loadDocs_().list.filter(d => /^students\/[^/]+$/.test(d.path))
+    .map(d => ({ key: d.path.slice(9), name: (d.data || {}).name || "", course: (d.data || {}).course || (d.data || {}).stage || "PhD" })));
 }
