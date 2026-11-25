@@ -121,7 +121,7 @@ You create groups and choose their members. Students can't create or change grou
 - New students aren't added to groups automatically; edit the group to include them.
 
 ## Profile & leave
-Each student has a **Profile & leave** tab: name, admission number, course, year of admission, research topic, co-supervisor, email and phone (editable with **Edit profile**), followed by their leave record.
+Each student has a **Profile & leave** tab: name, admission number, course, year of admission, **lab joined date**, research topic, co-supervisor, email and phone (editable with **Edit profile**), followed by their leave record. Until the lab joined date is set, the profile shows the sign-up date with a note to correct it.
 - **Students apply for leave:** first day, last day, type (Personal, Medical, Academic, Family / emergency, Other) and a reason. **Every calendar day counts, Saturdays and Sundays included** (Fri 20 to Mon 23 = 4 days). Overlapping dates are refused with a message. A request can be withdrawn while it's still pending.
 - **You approve or reject**, with an optional note, from the student's tab or from **Leave requests waiting for you** at the top of the Group overview. **Change decision** sends one back to pending. **Record leave** on a student's tab saves leave as approved straight away. Only you can approve, reject or delete; the server enforces this.
 - **Yearly totals:** approved days per calendar year, with days still waiting for approval shown separately and a breakdown by type. Use the Year menu for earlier years. Leave over New Year is split between the two years. The overview table has a **Leave <year>** column for every student.

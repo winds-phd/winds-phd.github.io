@@ -1,4 +1,4 @@
-import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl, calendarFeed, act } from "./core.js?v=20261122-1810";
+import { db, configured, currentUser, isSupervisor, keyFromUser, signOut, setupNotice, resetStudentSecret, onActivity, labMembers, uploadFile, fileUrl, calendarFeed, act } from "./core.js?v=20261125-1715";
 
 const COURSES = ["PhD", "Masters", "B-Tech"];
 function courseOf(s) { return s.course || (COURSES.includes(s.stage) ? s.stage : "PhD"); }
@@ -294,11 +294,14 @@ function profilePanel(s) {
       if (!name) { say("The name can't be empty."); return; }
       const year = val("pf-year").trim();
       if (year && !/^(19|20)\d\d$/.test(year)) { say("Enter the year of admission as four digits, e.g. 2023."); return; }
-      if (await write(db => db.doc("students/" + s.id).update({ name, topic: val("pf-topic").trim(), year, phone: val("pf-phone").trim(), supervisorName: val("pf-sup").trim() }), "Profile saved")) e.target.closest("details").open = false;
+      const labJoined = val("pf-joined");
+      if (labJoined && labJoined > todayStr()) { say("The lab joined date can't be in the future."); return; }
+      if (await write(db => db.doc("students/" + s.id).update({ name, topic: val("pf-topic").trim(), year, labJoined, phone: val("pf-phone").trim(), supervisorName: val("pf-sup").trim() }), "Profile saved")) e.target.closest("details").open = false;
     } },
     h("div", { class: "row" }, f("pf-name", "Full name", s.name, { maxlength: "80" }), f("pf-year", "Year of admission", s.year, { maxlength: "4", inputmode: "numeric", placeholder: "e.g. 2023" })),
     f("pf-topic", "Research topic", s.topic, { maxlength: "300" }),
-    h("div", { class: "row" }, f("pf-phone", "Phone (optional)", s.phone, { maxlength: "20", inputmode: "tel" }), f("pf-sup", "Co-supervisor (optional)", s.supervisorName, { maxlength: "80" })),
+    h("div", { class: "row" }, f("pf-joined", "Lab joined date", s.labJoined || (s.createdAt > 1e12 ? localDate(s.createdAt) : ""), { type: "date", max: todayStr() }), f("pf-phone", "Phone (optional)", s.phone, { maxlength: "20", inputmode: "tel" })),
+    f("pf-sup", "Co-supervisor (optional)", s.supervisorName, { maxlength: "80" }),
     h("div", null, h("button", { class: "btn", type: "submit", text: "Save profile" })));
   return h("section", { class: "panel sec-profile" },
     h("div", { class: "panel-head" }, h("h3", { text: "Profile" })),
@@ -306,10 +309,10 @@ function profilePanel(s) {
     S.canWrite ? h("details", { class: "sub" }, h("summary", { text: "Edit profile" }), h("div", { style: "margin-top:10px" }, form)) : null);
 }
 function refreshProfile(s) {
-  const y = thisYear(), joined = s.createdAt > 1e12 ? fmtD(localDate(s.createdAt)) : "—";
+  const y = thisYear(), joined = s.labJoined ? fmtD(s.labJoined) : s.createdAt > 1e12 ? fmtD(localDate(s.createdAt)) + " (sign-up date; set the real date under Edit profile)" : "Not set";
   const rows = [["Name", s.name], ["Admission no.", s.admissionNo || s.id.toUpperCase()], ["Course", courseOf(s)], ["Year of admission", s.year || "—"],
     ["Research topic", s.topic || "—"], ["Co-supervisor", s.supervisorName || "—"], ["Email", s.email || "Not added"], ["Phone", s.phone || "—"],
-    ["Joined the tracker", joined], ["Leave taken in " + y, plural(leaveTotal(s.id, y), "day") + (leaveTotal(s.id, y, "Pending") ? " · " + plural(leaveTotal(s.id, y, "Pending"), "day") + " waiting for approval" : "")]];
+    ["Lab joined date", joined], ["Leave taken in " + y, plural(leaveTotal(s.id, y), "day") + (leaveTotal(s.id, y, "Pending") ? " · " + plural(leaveTotal(s.id, y, "Pending"), "day") + " waiting for approval" : "")]];
   document.getElementById("pf-view").replaceChildren(...rows.map(([k, v]) => h("div", null, h("dt", { text: k }), h("dd", { text: v }))));
   refreshLeave(s);
 }
